@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nexastra — AI Client Hunter</title>
-  <meta name="description" content="Autonomous AI agent for finding and converting potential clients">
+  <title>Zynqora Edge — Autonomous AI Outreach Agent</title>
+  <meta name="description" content="Zynqora Edge — Fully autonomous AI agent for intelligent lead generation and email outreach">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -40,14 +40,14 @@
         <div class="robot-arm right"></div>
       </div>
       <div class="robot-status">
-        <div class="robot-status-dot"></div>
-        Agent Online
+        <div class="robot-status-dot" id="agent-status-dot"></div>
+        <span id="agent-status-label">Agent Online</span>
       </div>
     </div>
 
     <!-- Brand Name -->
-    <div class="brand-name">Nexastra</div>
-    <div class="brand-sub">AI Client Hunter</div>
+    <div class="brand-name">Zynqora Edge</div>
+    <div class="brand-sub">Autonomous AI Outreach</div>
 
     <!-- Nav -->
     <nav class="sidebar-nav" style="margin-top: 16px;">
@@ -73,6 +73,10 @@
         <span class="status-dot offline"></span>
         <span>Gmail: Disconnected</span>
       </div>
+      <div class="status-indicator" id="socket-status" style="margin-top:6px">
+        <span class="status-dot offline" id="socket-dot"></span>
+        <span id="socket-label">Connecting...</span>
+      </div>
     </div>
   </aside>
 
@@ -85,9 +89,28 @@
         <h2 id="page-title">Dashboard</h2>
       </div>
       <div class="header-right">
-        <button class="btn btn-glow" id="btn-run-pipeline" onclick="runPipeline()">
-          ⚡ Run Pipeline
-        </button>
+        <!-- Real-time Agent Status Bar -->
+        <div class="agent-status-bar" id="agent-status-bar">
+          <div class="agent-stat">
+            <span class="agent-stat-value" id="bar-emails-sent">0</span>
+            <span class="agent-stat-label">Sent Today</span>
+          </div>
+          <div class="agent-stat-divider"></div>
+          <div class="agent-stat">
+            <span class="agent-stat-value" id="bar-daily-cap">20</span>
+            <span class="agent-stat-label">Daily Cap</span>
+          </div>
+          <div class="agent-stat-divider"></div>
+          <div class="agent-stat">
+            <span class="agent-stat-value" id="bar-leads-today">0</span>
+            <span class="agent-stat-label">Leads Today</span>
+          </div>
+          <div class="agent-stat-divider"></div>
+          <div class="agent-stat">
+            <span class="agent-stat-value" id="bar-agent-state" style="font-size:0.7rem">IDLE</span>
+            <span class="agent-stat-label">Agent Mode</span>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -122,6 +145,32 @@
             <h3 id="stat-avg-score">0</h3>
             <p>Avg Score</p>
           </div>
+        </div>
+      </div>
+
+      <!-- Daily Progress Bar -->
+      <div class="glass-card" style="padding: 20px 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h3 style="margin:0; font-size:1rem;">📬 Daily Outreach Progress</h3>
+          <span id="daily-progress-label" style="font-size:0.85rem; color: var(--text-muted);">0 / 20 emails sent today</span>
+        </div>
+        <div class="daily-progress-track">
+          <div class="daily-progress-fill" id="daily-progress-fill" style="width:0%"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:0.78rem; color:var(--text-muted);">
+          <span>Warm-up Mode Active</span>
+          <span id="daily-progress-pct">0%</span>
+        </div>
+      </div>
+
+      <!-- Live Activity Log -->
+      <div class="glass-card">
+        <div class="card-header">
+          <h3>⚡ Live Agent Activity</h3>
+          <span class="live-badge">● LIVE</span>
+        </div>
+        <div class="log-container" id="live-activity-log" style="max-height:160px;">
+          <div class="log-entry log-info">Waiting for agent activity...</div>
         </div>
       </div>
 
@@ -220,62 +269,80 @@
 
     <!-- ─── Pipeline Page ─── -->
     <section class="page" id="page-pipeline">
-      <div class="glass-card pipeline-card">
-        <h3>⚡ Automation Pipeline</h3>
-        <p class="pipeline-desc">Run the full automated pipeline: Discover → Score → Analyze → Generate Emails → Send</p>
-        <div class="pipeline-steps">
-          <div class="step">
-            <div class="step-number">01</div>
-            <div class="step-info">
-              <h4>🔍 Discover Leads</h4>
-              <p>Search Google Maps for businesses across all configured niches and locations</p>
+
+      <!-- Autonomous Agent Status Card -->
+      <div class="glass-card pipeline-card" style="border: 1px solid rgba(99,102,241,0.3);">
+        <h3>🤖 Autonomous Agent Status</h3>
+        <p class="pipeline-desc">The agent runs automatically during business hours (9AM–6PM). No manual trigger required.</p>
+
+        <div class="stats-grid" style="margin-top:16px; grid-template-columns: repeat(4, 1fr);">
+          <div class="stat-card gradient-1" style="padding:14px">
+            <div class="stat-icon" style="font-size:1.2rem">📧</div>
+            <div class="stat-info">
+              <h3 id="pipe-emails-sent" style="font-size:1.4rem">0</h3>
+              <p style="font-size:0.72rem">Emails Sent Today</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="discoverLeads()">Run</button>
           </div>
-          <div class="step">
-            <div class="step-number">02</div>
-            <div class="step-info">
-              <h4>📊 Score & Qualify</h4>
-              <p>AI analyzes each lead and scores them based on their need for digital solutions</p>
+          <div class="stat-card gradient-2" style="padding:14px">
+            <div class="stat-icon" style="font-size:1.2rem">🎯</div>
+            <div class="stat-info">
+              <h3 id="pipe-leads-today" style="font-size:1.4rem">0</h3>
+              <p style="font-size:0.72rem">Leads Found Today</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="scoreLeads()">Run</button>
           </div>
-          <div class="step">
-            <div class="step-number">03</div>
-            <div class="step-info">
-              <h4>🧠 Analyze Niches</h4>
-              <p>Decide best service for each niche: AI Agent or WhatsApp Automation</p>
+          <div class="stat-card gradient-3" style="padding:14px">
+            <div class="stat-icon" style="font-size:1.2rem">📈</div>
+            <div class="stat-info">
+              <h3 id="pipe-daily-cap" style="font-size:1.4rem">20</h3>
+              <p style="font-size:0.72rem">Daily Cap</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="analyzeNiches()">Run</button>
           </div>
-          <div class="step">
-            <div class="step-number">04</div>
-            <div class="step-info">
-              <h4>✉️ Generate Pitches</h4>
-              <p>Create personalized email + WhatsApp pitches for qualified leads</p>
+          <div class="stat-card gradient-4" style="padding:14px">
+            <div class="stat-icon" style="font-size:1.2rem">⏰</div>
+            <div class="stat-info">
+              <h3 id="pipe-status" style="font-size:1rem">IDLE</h3>
+              <p style="font-size:0.72rem">Agent Status</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="generateEmails()">Run</button>
-          </div>
-          <div class="step">
-            <div class="step-number">05</div>
-            <div class="step-info">
-              <h4>📤 Send Outreach</h4>
-              <p>Send emails via Gmail (requires Gmail connection)</p>
-            </div>
-            <button class="btn btn-secondary btn-sm" disabled id="btn-send-all">Run</button>
           </div>
         </div>
-        <div class="pipeline-full">
-          <button class="btn btn-glow btn-lg" onclick="runPipeline()">⚡ Run Full Pipeline</button>
+
+        <div class="pipeline-full" style="margin-top:16px;">
+          <button class="btn btn-secondary btn-lg" onclick="runPipeline()" title="Admin/debug: manually trigger pipeline">🔧 Manual Trigger (Debug)</button>
           <button class="btn btn-secondary btn-lg" onclick="runFollowUps()">📩 Send Follow-Ups</button>
+        </div>
+      </div>
+
+      <!-- Warm-Up Schedule -->
+      <div class="glass-card">
+        <h3>📈 Email Warm-Up Schedule</h3>
+        <p class="pipeline-desc">Anti-ban warm-up prevents Gmail from flagging as spam.</p>
+        <div class="warmup-schedule">
+          <div class="warmup-day">
+            <div class="warmup-day-label">Day 1–3</div>
+            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:20%"></div></div>
+            <div class="warmup-day-cap">20/day</div>
+          </div>
+          <div class="warmup-day">
+            <div class="warmup-day-label">Day 4–7</div>
+            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:50%"></div></div>
+            <div class="warmup-day-cap">50/day</div>
+          </div>
+          <div class="warmup-day">
+            <div class="warmup-day-label">Day 8+</div>
+            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:100%"></div></div>
+            <div class="warmup-day-cap">100/day</div>
+          </div>
         </div>
       </div>
 
       <!-- Pipeline Log -->
       <div class="glass-card">
-        <h3>📋 Activity Log</h3>
+        <div class="card-header">
+          <h3>📋 Live Activity Log</h3>
+          <span class="live-badge">● LIVE</span>
+        </div>
         <div class="log-container" id="pipeline-log">
-          <div class="log-entry">Waiting for pipeline to run...</div>
+          <div class="log-entry">Waiting for agent activity...</div>
         </div>
       </div>
     </section>
@@ -288,7 +355,7 @@
       </div>
       <div class="glass-card">
         <h3>📧 Gmail Connection</h3>
-        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Connect your Gmail account to enable automated email outreach.</p>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Connect your Gmail account to enable the autonomous email outreach agent.</p>
         <button class="btn btn-glow" id="btn-connect-gmail" onclick="connectGmail()">
           Connect Gmail
         </button>
@@ -316,6 +383,8 @@
     <div class="toast-container" id="toast-container"></div>
   </main>
 
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

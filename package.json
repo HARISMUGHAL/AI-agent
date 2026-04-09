@@ -1,7 +1,7 @@
 {
-  "name": "nexastra-client-hunter",
-  "version": "1.0.0",
-  "description": "Autonomous AI agent for finding and converting potential clients via Google Maps and email outreach",
+  "name": "zynqora-edge-agent",
+  "version": "2.0.0",
+  "description": "Zynqora Edge — Fully autonomous AI outreach agent with business-hours scheduling, anti-ban email warm-up, and real-time dashboard",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"
@@ -11,9 +11,11 @@
     "lead-generation",
     "google-maps",
     "email-outreach",
-    "automation"
+    "automation",
+    "autonomous-agent",
+    "zynqora-edge"
   ],
-  "author": "Nexastra",
+  "author": "Zynqora Edge",
   "license": "MIT",
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -24,6 +26,7 @@
     "googleapis": "^144.0.0",
     "node-cron": "^3.0.3",
     "open": "^10.1.0",
+    "socket.io": "^4.8.1",
     "sql.js": "^1.11.0"
   }
 }

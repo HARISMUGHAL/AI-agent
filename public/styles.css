@@ -1446,6 +1446,128 @@ select option { background: var(--bg-secondary); color: var(--text-primary); }
   animation: rotate-ring 0.7s linear infinite;
 }
 
+/* ─── Agent Status Bar (Header) ────────────────────────── */
+.agent-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: rgba(0, 212, 255, 0.04);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-family: var(--font-game);
+}
+
+.agent-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 16px;
+  min-width: 70px;
+}
+
+.agent-stat-value {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  line-height: 1;
+}
+
+.agent-stat-label {
+  font-size: 0.55rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 3px;
+  font-family: var(--font-ui);
+}
+
+.agent-stat-divider {
+  width: 1px;
+  height: 36px;
+  background: var(--border-bright);
+}
+
+/* ─── Daily Progress Bar ───────────────────────────────── */
+.daily-progress-track {
+  width: 100%;
+  height: 8px;
+  background: rgba(0, 212, 255, 0.08);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.daily-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+  border-radius: 999px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
+}
+
+/* ─── Live Badge ────────────────────────────────────────── */
+.live-badge {
+  font-family: var(--font-game);
+  font-size: 0.6rem;
+  letter-spacing: 2px;
+  color: var(--green);
+  text-shadow: 0 0 8px var(--green);
+  animation: glow-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── Activity Log Level Colors ─────────────────────────── */
+.log-entry.log-success { color: var(--green); }
+.log-entry.log-warning { color: var(--orange); }
+.log-entry.log-error   { color: var(--pink); }
+.log-entry.log-info    { color: var(--text-secondary); }
+
+/* ─── Warm-Up Schedule ──────────────────────────────────── */
+.warmup-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.warmup-day {
+  display: grid;
+  grid-template-columns: 80px 1fr 60px;
+  align-items: center;
+  gap: 14px;
+}
+
+.warmup-day-label {
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.warmup-bar-track {
+  height: 6px;
+  background: rgba(0, 212, 255, 0.08);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.warmup-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--purple), var(--cyan));
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+}
+
+.warmup-day-cap {
+  font-family: var(--font-game);
+  font-size: 0.72rem;
+  color: var(--cyan);
+  text-align: right;
+}
+
 /* ─── Mobile ─────────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar {
@@ -1461,4 +1583,6 @@ select option { background: var(--bg-secondary); color: var(--text-primary); }
   .charts-row { grid-template-columns: 1fr; }
   .pipeline-full { flex-direction: column; align-items: center; }
   .form-row { flex-direction: column; }
+  .agent-status-bar { display: none; }
 }
+

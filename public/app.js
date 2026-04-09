@@ -1,9 +1,23 @@
-// ─── State ───────────────────────────────────────────
-let currentPage = 'dashboard';
-let allLeads = [];
-let dashboardData = null;
+/**
+ * app.js — Zynqora Edge Dashboard
+ * Real-time updates via Socket.io
+ */
 
-// ─── Init ────────────────────────────────────────────
+// ─── State ────────────────────────────────────────────
+let currentPage = 'dashboard';
+let allLeads    = [];
+let dashboardData = null;
+let socket      = null;
+let agentState  = {
+  status: 'idle',
+  emails_sent_today: 0,
+  leads_found_today: 0,
+  daily_cap: 20,
+  daily_target: 100,
+  is_business_hours: false
+};
+
+// ─── Init ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Check if Gmail was just connected
   const params = new URLSearchParams(window.location.search);
@@ -30,36 +44,205 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sidebar').classList.remove('open');
   });
 
+  // Init Socket.io
+  initSocket();
+
   // Load initial data
   loadDashboard();
+
+  // Fallback polling every 10 seconds (if socket disconnects)
+  setInterval(() => {
+    if (!socket || !socket.connected) {
+      pollAgentStatus();
+    }
+  }, 10000);
 });
 
-// ─── Navigation ──────────────────────────────────────
-function navigateTo(page) {
-  currentPage = page;
-  
-  // Update nav
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.querySelector(`[data-page="${page}"]`).classList.add('active');
-  
-  // Update page
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById(`page-${page}`).classList.add('active');
-  
-  // Update header
-  const titles = { dashboard: 'Dashboard', leads: 'Lead Management', niches: 'Niche Analysis', pipeline: 'Automation Pipeline', settings: 'Settings' };
-  document.getElementById('page-title').textContent = titles[page] || page;
+// ─── Socket.io Real-Time ──────────────────────────────
+function initSocket() {
+  socket = io({ transports: ['websocket', 'polling'] });
 
-  // Load page data
-  switch (page) {
-    case 'dashboard': loadDashboard(); break;
-    case 'leads': loadLeads(); break;
-    case 'niches': loadNiches(); break;
-    case 'settings': loadSettings(); break;
+  socket.on('connect', () => {
+    updateSocketStatus(true);
+    addActivityLog('🔌 Real-time connection established.', 'success');
+  });
+
+  socket.on('disconnect', () => {
+    updateSocketStatus(false);
+    addActivityLog('⚠️ Real-time connection lost. Using polling fallback.', 'warning');
+  });
+
+  // Agent status updates (every 5s from server)
+  socket.on('agent:status', (data) => {
+    agentState = { ...agentState, ...data };
+    updateAgentStatusBar(data);
+    updatePipelinePage(data);
+    updateAgentSidebarStatus(data);
+  });
+
+  // Agent log events
+  socket.on('agent:log', (data) => {
+    addActivityLog(data.message, data.level);
+  });
+
+  // New lead found
+  socket.on('agent:lead_found', (data) => {
+    agentState.leads_found_today++;
+    showToast(`🎯 New lead: ${data.business_name} (${data.niche})`, 'success');
+    if (currentPage === 'dashboard') {
+      loadDashboard();
+    } else if (currentPage === 'leads') {
+      loadLeads();
+    }
+  });
+
+  // Email sent
+  socket.on('agent:email_sent', (data) => {
+    agentState.emails_sent_today = data.emails_sent_today;
+    updateAgentStatusBar(agentState);
+    updateDailyProgress(data.emails_sent_today, data.daily_cap);
+    showToast(`📤 Email sent to ${data.business_name}`, 'success');
+    if (currentPage === 'dashboard') {
+      loadDashboard();
+    }
+  });
+}
+
+// ─── Socket Status UI ─────────────────────────────────
+function updateSocketStatus(connected) {
+  const dot   = document.getElementById('socket-dot');
+  const label = document.getElementById('socket-label');
+  if (dot)   dot.className   = `status-dot ${connected ? 'online' : 'offline'}`;
+  if (label) label.textContent = connected ? 'Live Updates: ON' : 'Live Updates: OFF';
+}
+
+// ─── Agent Status Bar (Header) ────────────────────────
+function updateAgentStatusBar(data) {
+  const sent  = data.emails_sent_today ?? agentState.emails_sent_today;
+  const cap   = data.daily_cap        ?? agentState.daily_cap;
+  const leads = data.leads_found_today ?? agentState.leads_found_today;
+  const st    = (data.status || agentState.status || 'idle').toUpperCase();
+
+  setEl('bar-emails-sent', sent);
+  setEl('bar-daily-cap', cap);
+  setEl('bar-leads-today', leads);
+  setEl('bar-agent-state', st);
+
+  updateDailyProgress(sent, cap);
+}
+
+function updateDailyProgress(sent, cap) {
+  const pct = cap > 0 ? Math.min(Math.round((sent / cap) * 100), 100) : 0;
+  const fill  = document.getElementById('daily-progress-fill');
+  const label = document.getElementById('daily-progress-label');
+  const pctEl = document.getElementById('daily-progress-pct');
+
+  if (fill)  fill.style.width  = `${pct}%`;
+  if (label) label.textContent = `${sent} / ${cap} emails sent today`;
+  if (pctEl) pctEl.textContent = `${pct}%`;
+}
+
+// ─── Pipeline Page ─────────────────────────────────────
+function updatePipelinePage(data) {
+  const sent  = data.emails_sent_today ?? 0;
+  const leads = data.leads_found_today ?? 0;
+  const cap   = data.daily_cap        ?? 20;
+  const st    = (data.status || 'idle').toUpperCase();
+
+  setEl('pipe-emails-sent', sent);
+  setEl('pipe-leads-today', leads);
+  setEl('pipe-daily-cap', cap);
+  setEl('pipe-status', st);
+}
+
+// ─── Sidebar Agent Status ──────────────────────────────
+function updateAgentSidebarStatus(data) {
+  const dot    = document.getElementById('agent-status-dot');
+  const label  = document.getElementById('agent-status-label');
+  const status = data.status || 'idle';
+
+  const stateMap = {
+    running:     { cls: 'online',  text: 'Agent Running' },
+    idle:        { cls: 'online',  text: 'Agent Online'  },
+    sleeping:    { cls: 'offline', text: 'Agent Sleeping' },
+    cap_reached: { cls: 'offline', text: 'Cap Reached'   }
+  };
+
+  const s = stateMap[status] || stateMap.idle;
+  if (dot)   dot.className   = `robot-status-dot ${s.cls === 'online' ? '' : 'offline'}`;
+  if (label) label.textContent = s.text;
+}
+
+// ─── Activity Log ──────────────────────────────────────
+function addActivityLog(message, level = 'info') {
+  const levelClass = {
+    info:    'log-info',
+    success: 'log-success',
+    warning: 'log-warning',
+    error:   'log-error'
+  }[level] || 'log-info';
+
+  const ts = new Date().toLocaleTimeString();
+  const entry = `<div class="log-entry ${levelClass}">[${ts}] ${escapeHtml(message)}</div>`;
+
+  // Live activity log on dashboard
+  const liveLog = document.getElementById('live-activity-log');
+  if (liveLog) {
+    liveLog.insertAdjacentHTML('afterbegin', entry);
+    // Keep only last 20 entries
+    const entries = liveLog.querySelectorAll('.log-entry');
+    if (entries.length > 20) entries[entries.length - 1].remove();
+  }
+
+  // Pipeline page log
+  const pipeLog = document.getElementById('pipeline-log');
+  if (pipeLog) {
+    pipeLog.insertAdjacentHTML('afterbegin', entry);
+    const entries = pipeLog.querySelectorAll('.log-entry');
+    if (entries.length > 50) entries[entries.length - 1].remove();
   }
 }
 
-// ─── API Helpers ─────────────────────────────────────
+// ─── Fallback Polling ──────────────────────────────────
+async function pollAgentStatus() {
+  try {
+    const data = await api('/agent/status');
+    if (data) {
+      agentState = { ...agentState, ...data };
+      updateAgentStatusBar(data);
+      updatePipelinePage(data);
+    }
+  } catch (e) { /* silent */ }
+}
+
+// ─── Navigation ───────────────────────────────────────
+function navigateTo(page) {
+  currentPage = page;
+
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelector(`[data-page="${page}"]`).classList.add('active');
+
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(`page-${page}`).classList.add('active');
+
+  const titles = {
+    dashboard: 'Dashboard',
+    leads: 'Lead Management',
+    niches: 'Niche Analysis',
+    pipeline: 'Automation Pipeline',
+    settings: 'Settings'
+  };
+  document.getElementById('page-title').textContent = titles[page] || page;
+
+  switch (page) {
+    case 'dashboard': loadDashboard(); break;
+    case 'leads':     loadLeads();     break;
+    case 'niches':    loadNiches();    break;
+    case 'settings':  loadSettings();  break;
+  }
+}
+
+// ─── API Helpers ──────────────────────────────────────
 async function api(endpoint, options = {}) {
   try {
     const res = await fetch(`/api${endpoint}`, {
@@ -74,7 +257,7 @@ async function api(endpoint, options = {}) {
   }
 }
 
-// ─── Dashboard ───────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────
 async function loadDashboard() {
   const data = await api('/dashboard');
   if (!data) return;
@@ -82,12 +265,20 @@ async function loadDashboard() {
 
   // Update stats
   animateNumber('stat-total-leads', data.totalLeads);
-  animateNumber('stat-contacted', data.contacted);
-  animateNumber('stat-responded', data.responded);
-  animateNumber('stat-avg-score', data.avgScore);
+  animateNumber('stat-contacted',   data.contacted);
+  animateNumber('stat-responded',   data.responded);
+  animateNumber('stat-avg-score',   data.avgScore);
 
   // Gmail status
   updateGmailStatus(data.gmailConnected);
+
+  // Update agent status bar from dashboard agent data
+  if (data.agentStatus) {
+    agentState = { ...agentState, ...data.agentStatus };
+    updateAgentStatusBar(data.agentStatus);
+    updatePipelinePage(data.agentStatus);
+    updateAgentSidebarStatus(data.agentStatus);
+  }
 
   // Status breakdown chart
   renderBarChart('status-chart', data.statusBreakdown.map(s => ({
@@ -125,15 +316,15 @@ async function loadDashboard() {
   }
 }
 
-// ─── Leads ───────────────────────────────────────────
+// ─── Leads ────────────────────────────────────────────
 async function loadLeads() {
   const status = document.getElementById('lead-filter-status').value;
-  const niche = document.getElementById('lead-filter-niche').value;
-  
+  const niche  = document.getElementById('lead-filter-niche').value;
+
   let endpoint = '/leads';
   const params = new URLSearchParams();
   if (status) params.set('status', status);
-  if (niche) params.set('niche', niche);
+  if (niche)  params.set('niche', niche);
   if (params.toString()) endpoint += `?${params}`;
 
   const leads = await api(endpoint);
@@ -145,14 +336,14 @@ async function loadLeads() {
 
 function renderLeadsTable(containerId, leads, showActions = false) {
   const tbody = document.getElementById(containerId);
-  
+
   if (!leads || leads.length === 0) {
     tbody.innerHTML = `
       <tr><td colspan="${showActions ? 8 : 6}">
         <div class="empty-state">
           <div class="empty-state-icon">🔍</div>
           <h3>No leads yet</h3>
-          <p>Run the discovery pipeline to find businesses</p>
+          <p>The autonomous agent will discover businesses automatically during business hours</p>
         </div>
       </td></tr>`;
     return;
@@ -160,7 +351,7 @@ function renderLeadsTable(containerId, leads, showActions = false) {
 
   tbody.innerHTML = leads.map(lead => {
     let mode = 'Unknown';
-    if (lead.email && lead.phone) mode = 'Email + WhatsApp';
+    if (lead.email && lead.phone)  mode = 'Email + WhatsApp';
     else if (!lead.email && lead.phone) mode = 'WhatsApp Only';
     else if (lead.email && !lead.phone) mode = 'Email Only';
 
@@ -169,8 +360,8 @@ function renderLeadsTable(containerId, leads, showActions = false) {
       <td><strong>${escapeHtml(lead.business_name)}</strong></td>
       <td>${capitalize(lead.niche || '-')}</td>
       <td>${escapeHtml(lead.location || '-')}</td>
-      ${showActions ? `<td>${lead.website 
-        ? `<a href="${escapeHtml(lead.website)}" class="website-link" target="_blank" onclick="event.stopPropagation()">${shortenUrl(lead.website)}</a>` 
+      ${showActions ? `<td>${lead.website
+        ? `<a href="${escapeHtml(lead.website)}" class="website-link" target="_blank" onclick="event.stopPropagation()">${shortenUrl(lead.website)}</a>`
         : '<span class="no-website">No website</span>'}</td>` : ''}
       <td><span class="score-badge ${getScoreClass(lead.score)}">${lead.score || '-'}</span></td>
       <td><span class="badge" style="background:#334155;color:white;font-size:0.75rem">${mode}</span></td>
@@ -179,14 +370,14 @@ function renderLeadsTable(containerId, leads, showActions = false) {
         <div style="display:flex;gap:6px">
           ${lead.status === 'scored' || lead.status === 'new' ? `<button class="btn btn-sm btn-secondary" onclick="generateEmail(${lead.id})">✉️ Gen</button>` : ''}
           ${lead.status === 'email_ready' && lead.email ? `<button class="btn btn-sm btn-glow" onclick="sendEmail(${lead.id})">📤 Send</button>` : ''}
-          ${lead.status === 'email_ready' && lead.whatsapp_draft && lead.phone ? `<a href="https://wa.me/${lead.phone.replace(/\\D/g, '')}?text=${encodeURIComponent(JSON.parse(lead.whatsapp_draft).body)}" target="_blank" class="btn btn-sm btn-secondary" style="background:#10b981">💬 WhatsApp</a>` : ''}
+          ${lead.status === 'email_ready' && lead.whatsapp_draft && lead.phone ? `<a href="https://wa.me/${lead.phone.replace(/\D/g, '')}?text=${encodeURIComponent(JSON.parse(lead.whatsapp_draft).body)}" target="_blank" class="btn btn-sm btn-secondary" style="background:#10b981">💬 WhatsApp</a>` : ''}
         </div>
       </td>` : ''}
     </tr>
   `;}).join('');
 }
 
-// ─── Lead Detail Modal ───────────────────────────────
+// ─── Lead Detail Modal ────────────────────────────────
 async function showLeadDetail(id) {
   const data = await api(`/leads/${id}`);
   if (!data) return;
@@ -212,20 +403,20 @@ async function showLeadDetail(id) {
         <div class="modal-section" style="border-left: 4px solid #10b981;">
           <h4>💬 WhatsApp Draft</h4>
           <div class="modal-email-preview">${escapeHtml(draft.body)}</div>
-          ${data.phone ? `<a href="https://wa.me/${data.phone.replace(/\D/g, '')}?text=${encodeURIComponent(draft.body)}" target="_blank" class="btn btn-sm btn-secondary" style="background:#10b981; margin-top:10px;">Send via WhatsApp Web</a>` : '<p style="color:var(--error);font-size:0.8rem;margin-top:5px;">No phone number available to send WhatsApp.</p>'}
+          ${data.phone ? `<a href="https://wa.me/${data.phone.replace(/\D/g, '')}?text=${encodeURIComponent(draft.body)}" target="_blank" class="btn btn-sm btn-secondary" style="background:#10b981; margin-top:10px;">Send via WhatsApp Web</a>` : '<p style="color:var(--error);font-size:0.8rem;margin-top:5px;">No phone number available.</p>'}
         </div>`;
     } catch (e) {}
   }
 
   let mode = 'Unknown';
-  if (data.email && data.phone) mode = 'Email + WhatsApp';
+  if (data.email && data.phone)  mode = 'Email + WhatsApp';
   else if (!data.email && data.phone) mode = 'WhatsApp Only';
   else if (data.email && !data.phone) mode = 'Email Only';
 
   document.getElementById('modal-content').innerHTML = `
     <h3 class="modal-title">${escapeHtml(data.business_name)}</h3>
     <p class="modal-subtitle">${capitalize(data.niche || '')} • ${escapeHtml(data.location || '')} • <strong style="color:var(--text-highlight)">${mode}</strong></p>
-    
+
     <div class="modal-section">
       <h4>Business Details</h4>
       <div class="modal-detail"><span class="modal-detail-label">Website:</span> ${data.website ? `<a href="${escapeHtml(data.website)}" class="website-link" target="_blank">${data.website}</a>` : '<span class="no-website">None</span>'}</div>
@@ -270,35 +461,32 @@ function closeModal() {
   document.getElementById('lead-modal').classList.remove('active');
 }
 
-// Close modal on escape
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
-// Close modal on overlay click
 document.getElementById('lead-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('lead-modal')) closeModal();
 });
 
-// ─── Niches ──────────────────────────────────────────
+// ─── Niches ───────────────────────────────────────────
 async function loadNiches() {
   const niches = await api('/niches');
   if (!niches) return;
 
   const grid = document.getElementById('niches-grid');
-  
+
   if (niches.length === 0) {
     grid.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1">
         <div class="empty-state-icon">📂</div>
         <h3>No niche data yet</h3>
-        <p>Run discovery first, then analyze niches</p>
+        <p>The autonomous agent will discover and analyze niches automatically</p>
       </div>`;
     return;
   }
 
   const icons = {
     restaurants: '🍽️', salons: '💇', gyms: '💪', 'real estate': '🏠',
-    clinics: '🏥', 'dental': '🦷', 'law': '⚖️', spas: '🧖',
-    'pet': '🐾', tutoring: '📚', 'auto': '🚗', default: '🏢'
+    clinics: '🏥', dental: '🦷', law: '⚖️', spas: '🧖',
+    pet: '🐾', tutoring: '📚', auto: '🚗', default: '🏢'
   };
 
   grid.innerHTML = niches.map((niche, i) => {
@@ -330,7 +518,7 @@ async function loadNiches() {
   }).join('');
 }
 
-// ─── Settings ────────────────────────────────────────
+// ─── Settings ─────────────────────────────────────────
 async function loadSettings() {
   const data = await api('/dashboard');
   if (!data) return;
@@ -353,9 +541,20 @@ async function loadSettings() {
       <span class="setting-name">📤 Gmail Connected</span>
       <span class="setting-status ${data.gmailConnected ? 'configured' : 'missing'}">${data.gmailConnected ? '✅ Connected' : '❌ Not connected'}</span>
     </div>
+    <div class="setting-row">
+      <span class="setting-name">🤖 Agent Mode</span>
+      <span class="setting-status configured">✅ Fully Automatic</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-name">📊 Daily Target</span>
+      <span class="setting-status configured">✅ 100 emails/day</span>
+    </div>
+    <div class="setting-row">
+      <span class="setting-name">🛡️ Email Strategy</span>
+      <span class="setting-status configured">✅ Rate Limited + Warm-Up</span>
+    </div>
   `;
 
-  // Update Gmail button
   const gmailBtn = document.getElementById('btn-connect-gmail');
   if (data.gmailConnected) {
     gmailBtn.textContent = '🔄 Reconnect Gmail / Sheets';
@@ -368,21 +567,11 @@ async function loadSettings() {
   }
 }
 
-// ─── Actions ─────────────────────────────────────────
+// ─── Actions ──────────────────────────────────────────
 async function runPipeline() {
-  const btn = document.getElementById('btn-run-pipeline');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loading"></span> Running...';
-  showToast('🚀 Pipeline started! Check console for progress.', 'info');
-
+  showToast('🔧 Manual pipeline triggered (debug mode).', 'info');
   await api('/pipeline/run', { method: 'POST' });
-
-  setTimeout(() => {
-    btn.disabled = false;
-    btn.innerHTML = '🚀 Run Pipeline';
-    loadDashboard();
-    showToast('✅ Pipeline completed!', 'success');
-  }, 5000);
+  setTimeout(() => loadDashboard(), 3000);
 }
 
 async function runFollowUps() {
@@ -477,7 +666,7 @@ async function connectGmail() {
 }
 
 async function manualDiscover() {
-  const niche = document.getElementById('discover-niche').value.trim();
+  const niche    = document.getElementById('discover-niche').value.trim();
   const location = document.getElementById('discover-location').value.trim();
   if (!niche || !location) return showToast('Enter both niche and location', 'error');
 
@@ -491,7 +680,7 @@ async function manualDiscover() {
   }
 }
 
-// ─── Charts ──────────────────────────────────────────
+// ─── Charts ───────────────────────────────────────────
 function renderBarChart(containerId, data) {
   const container = document.getElementById(containerId);
   if (!data || data.length === 0) {
@@ -511,7 +700,7 @@ function renderBarChart(containerId, data) {
   `).join('');
 }
 
-// ─── Gmail Status ────────────────────────────────────
+// ─── Gmail Status ─────────────────────────────────────
 function updateGmailStatus(connected) {
   const el = document.getElementById('gmail-status');
   el.innerHTML = `
@@ -520,7 +709,7 @@ function updateGmailStatus(connected) {
   `;
 }
 
-// ─── Toast Notifications ─────────────────────────────
+// ─── Toast Notifications ──────────────────────────────
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
@@ -535,7 +724,12 @@ function showToast(message, type = 'info') {
   }, 4000);
 }
 
-// ─── Utilities ───────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────
+function setEl(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
 function animateNumber(elementId, target) {
   const el = document.getElementById(elementId);
   const start = parseInt(el.textContent) || 0;
@@ -543,9 +737,9 @@ function animateNumber(elementId, target) {
   const startTime = performance.now();
 
   function update(currentTime) {
-    const elapsed = currentTime - startTime;
+    const elapsed  = currentTime - startTime;
     const progress = Math.min(elapsed / duration, 1);
-    const eased = 1 - Math.pow(1 - progress, 3);
+    const eased    = 1 - Math.pow(1 - progress, 3);
     el.textContent = Math.round(start + (target - start) * eased);
     if (progress < 1) requestAnimationFrame(update);
   }
@@ -565,7 +759,10 @@ function capitalize(str) {
 }
 
 function formatStatus(status) {
-  const map = { new: 'New', scored: 'Scored', email_ready: 'Email Ready', contacted: 'Contacted', followed_up: 'Followed Up', responded: 'Responded' };
+  const map = {
+    new: 'New', scored: 'Scored', email_ready: 'Email Ready',
+    contacted: 'Contacted', followed_up: 'Followed Up', responded: 'Responded'
+  };
   return map[status] || capitalize(status || 'unknown');
 }
 
@@ -583,7 +780,10 @@ function getServiceClass(type) {
 }
 
 function getStatusColor(status) {
-  const colors = { new: '#3b82f6', scored: '#f59e0b', email_ready: '#a78bfa', contacted: '#10b981', followed_up: '#22d3ee', responded: '#34d399' };
+  const colors = {
+    new: '#3b82f6', scored: '#f59e0b', email_ready: '#a78bfa',
+    contacted: '#10b981', followed_up: '#22d3ee', responded: '#34d399'
+  };
   return colors[status] || '#64748b';
 }
 

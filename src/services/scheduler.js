@@ -1,130 +1,366 @@
+/**
+ * scheduler.js — Autonomous Business-Hours Agent
+ * Zynqora Edge — Fully Autonomous AI Outreach Agent
+ *
+ * Features:
+ *  - Runs only during business hours (9AM–6PM local time)
+ *  - Interval: every AGENT_RUN_INTERVAL_MINUTES (default 12 min)
+ *  - Email warm-up: Day 1-3 → 20/day, Day 4-7 → 50/day, Day 8+ → 100/day
+ *  - Random delay between emails: 30–120 seconds
+ *  - Retry with exponential backoff on send failure
+ *  - Daily counter reset at midnight
+ *  - Emits real-time events via Socket.io
+ */
+
 const cron = require('node-cron');
 const { runDiscovery } = require('./googleMaps');
 const { scoreAllLeads } = require('./leadScorer');
 const { analyzeNiches } = require('./nicheAnalyzer');
 const { generateAllEmails, generateEmailForLead } = require('./emailGenerator');
-const { getLeadsByStatus, getLeadsNeedingFollowUp } = require('../database/db');
-const { sendEmailToLead, isAuthenticated } = require('./gmailService');
+const {
+  getLeadsByStatus, getLeadsNeedingFollowUp,
+  getSetting, setSetting, getStats
+} = require('../database/db');
+const { sendEmailSafe, isAuthenticated } = require('./gmailService');
 const { sendDailyReport } = require('./reportGenerator');
+const { emitStatus, emitLog, emitLeadFound, emitEmailSent } = require('./socketService');
 
-let isRunning = false;
+// ─── Agent State ──────────────────────────────────────────────────────────────
+const agentState = {
+  isRunning: false,
+  emailsSentToday: 0,
+  leadsFoundToday: 0,
+  lastRunAt: null,
+  nextRunAt: null,
+  dailyCap: 20,
+  agentStartDate: null,
+  status: 'idle',        // 'idle' | 'running' | 'sleeping' | 'cap_reached'
+  mode: 'fully_automatic',
+  lastLog: ''
+};
 
-/**
- * Run the full pipeline: discover → score → analyze → generate → send
- */
+// ─── Constants ────────────────────────────────────────────────────────────────
+const BUSINESS_HOUR_START = parseInt(process.env.BUSINESS_HOUR_START || '9');
+const BUSINESS_HOUR_END   = parseInt(process.env.BUSINESS_HOUR_END   || '18');
+const INTERVAL_MINUTES    = parseInt(process.env.AGENT_RUN_INTERVAL_MINUTES || '12');
+const MAX_DAILY_CAP       = 100;
+
+// ─── Warm-Up Logic ────────────────────────────────────────────────────────────
+function getDailyCap() {
+  if (!agentState.agentStartDate) {
+    const stored = getSetting('agent_start_date');
+    if (stored) {
+      agentState.agentStartDate = new Date(stored);
+    } else {
+      agentState.agentStartDate = new Date();
+      setSetting('agent_start_date', agentState.agentStartDate.toISOString());
+    }
+  }
+
+  const now = new Date();
+  const daysSinceStart = Math.floor(
+    (now - agentState.agentStartDate) / (1000 * 60 * 60 * 24)
+  );
+
+  if (daysSinceStart <= 2) return 20;      // Day 1–3
+  if (daysSinceStart <= 6) return 50;      // Day 4–7
+  return MAX_DAILY_CAP;                    // Day 8+
+}
+
+// ─── Business Hours Check ─────────────────────────────────────────────────────
+function isBusinessHours() {
+  const now = new Date();
+  const hour = now.getHours();
+  return hour >= BUSINESS_HOUR_START && hour < BUSINESS_HOUR_END;
+}
+
+// ─── Random Delay Helper ──────────────────────────────────────────────────────
+function randomDelay(minMs = 30000, maxMs = 120000) {
+  const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ─── Midnight Daily Reset ─────────────────────────────────────────────────────
+function scheduleMidnightReset() {
+  cron.schedule('0 0 * * *', () => {
+    agentState.emailsSentToday = 0;
+    agentState.leadsFoundToday = 0;
+    agentState.status = 'idle';
+    agentState.dailyCap = getDailyCap();
+    log('🌅 Midnight reset: Daily counters cleared.', 'info');
+    broadcastStatus();
+  });
+}
+
+// ─── Logging Helper ───────────────────────────────────────────────────────────
+function log(message, level = 'info') {
+  const ts = new Date().toLocaleTimeString();
+  console.log(`[${ts}] ${message}`);
+  agentState.lastLog = message;
+  emitLog(message, level);
+}
+
+// ─── Broadcast Status ─────────────────────────────────────────────────────────
+function broadcastStatus() {
+  agentState.dailyCap = getDailyCap();
+  emitStatus({
+    status:            agentState.status,
+    mode:              agentState.mode,
+    emails_sent_today: agentState.emailsSentToday,
+    leads_found_today: agentState.leadsFoundToday,
+    daily_cap:         agentState.dailyCap,
+    last_run_at:       agentState.lastRunAt,
+    next_run_at:       agentState.nextRunAt,
+    is_business_hours: isBusinessHours(),
+    last_log:          agentState.lastLog,
+    daily_target:      MAX_DAILY_CAP,
+    dashboard_name:    'Zynqora Edge'
+  });
+}
+
+// ─── Get Agent Status (for API) ───────────────────────────────────────────────
+function getAgentStatus() {
+  agentState.dailyCap = getDailyCap();
+  return {
+    status:            agentState.status,
+    mode:              agentState.mode,
+    emails_sent_today: agentState.emailsSentToday,
+    leads_found_today: agentState.leadsFoundToday,
+    daily_cap:         agentState.dailyCap,
+    daily_target:      MAX_DAILY_CAP,
+    last_run_at:       agentState.lastRunAt,
+    next_run_at:       agentState.nextRunAt,
+    is_business_hours: isBusinessHours(),
+    last_log:          agentState.lastLog,
+    dashboard_name:    'Zynqora Edge',
+    agent_mode:        'fully_automatic',
+    email_strategy:    'rate_limited_randomized',
+    realtime_updates:  true
+  };
+}
+
+// ─── Full Pipeline ─────────────────────────────────────────────────────────────
 async function runFullPipeline() {
-  if (isRunning) {
-    console.log('⚠️  Pipeline is already running. Skipping.');
+  if (agentState.isRunning) {
+    log('⚠️  Pipeline already running. Skipping.', 'warning');
     return { success: false, message: 'Pipeline already running' };
   }
 
-  isRunning = true;
+  const cap = getDailyCap();
+  agentState.dailyCap = cap;
+
+  if (agentState.emailsSentToday >= cap) {
+    agentState.status = 'cap_reached';
+    log(`🛑 Daily email cap reached (${agentState.emailsSentToday}/${cap}). Skipping outreach.`, 'warning');
+    broadcastStatus();
+    return { success: false, message: 'Daily cap reached' };
+  }
+
+  agentState.isRunning = true;
+  agentState.status = 'running';
+  agentState.lastRunAt = new Date().toISOString();
+  broadcastStatus();
+
   const results = { discovered: 0, scored: 0, emailsGenerated: 0, emailsSent: 0 };
 
   try {
-    console.log('\n' + '═'.repeat(50));
-    console.log('🚀 STARTING FULL PIPELINE');
-    console.log('═'.repeat(50));
+    log('\n' + '═'.repeat(50), 'info');
+    log('🚀 ZYNQORA EDGE — AUTONOMOUS PIPELINE STARTING', 'info');
+    log('═'.repeat(50), 'info');
 
-    console.log('\n── Step 1/5: Discovery ──');
+    // Step 1: Discover
+    log('── Step 1/5: Lead Discovery ──', 'info');
+    broadcastStatus();
     results.discovered = await runDiscovery();
+    agentState.leadsFoundToday += results.discovered;
+    log(`✅ Discovered ${results.discovered} new leads today.`, 'success');
+    broadcastStatus();
 
-    console.log('\n── Step 2/5: Scoring ──');
+    // Step 2: Score
+    log('── Step 2/5: AI Scoring ──', 'info');
     results.scored = await scoreAllLeads();
+    log(`✅ Scored ${results.scored} leads.`, 'success');
+    broadcastStatus();
 
-    console.log('\n── Step 3/5: Niche Analysis ──');
+    // Step 3: Niche Analysis
+    log('── Step 3/5: Niche Analysis ──', 'info');
     await analyzeNiches();
+    log('✅ Niche analysis complete.', 'success');
 
-    console.log('\n── Step 4/5: Email Generation ──');
+    // Step 4: Email Generation
+    log('── Step 4/5: Email Generation ──', 'info');
     results.emailsGenerated = await generateAllEmails();
+    log(`✅ Generated ${results.emailsGenerated} email drafts.`, 'success');
+    broadcastStatus();
 
-    console.log('\n── Step 5/5: Email Outreach ──');
+    // Step 5: Outreach (with anti-ban delays)
+    log('── Step 5/5: Smart Email Outreach ──', 'info');
     if (isAuthenticated()) {
       const readyLeads = getLeadsByStatus('email_ready');
-      console.log(`📊 Found ${readyLeads.length} leads in 'email_ready' status.`);
-      
-      for (const lead of readyLeads) {
+      const remaining = cap - agentState.emailsSentToday;
+      const toSend = readyLeads.slice(0, Math.max(0, remaining));
+
+      log(`📊 ${readyLeads.length} leads ready. Sending up to ${toSend.length} (cap: ${cap}, sent today: ${agentState.emailsSentToday}).`, 'info');
+
+      for (const lead of toSend) {
+        if (agentState.emailsSentToday >= cap) {
+          log(`🛑 Daily cap hit mid-run (${agentState.emailsSentToday}/${cap}). Stopping outreach.`, 'warning');
+          agentState.status = 'cap_reached';
+          break;
+        }
+
         if (lead.email_draft) {
           try {
             const emailData = JSON.parse(lead.email_draft);
-            const sent = await sendEmailToLead(lead, emailData);
-            if (sent) results.emailsSent++;
-            await new Promise(r => setTimeout(r, 2000));
+            const sent = await sendEmailSafe(lead, emailData, agentState.emailsSentToday, cap);
+            if (sent) {
+              results.emailsSent++;
+              agentState.emailsSentToday++;
+              emitEmailSent(lead, agentState.emailsSentToday, cap);
+              log(`📤 Email sent to ${lead.business_name} (${lead.email}) [${agentState.emailsSentToday}/${cap}]`, 'success');
+              broadcastStatus();
+
+              // Anti-ban: random delay 30–120 seconds between emails
+              const delaySec = Math.floor(Math.random() * 91) + 30;
+              log(`⏳ Waiting ${delaySec}s before next email (anti-ban)...`, 'info');
+              await randomDelay(delaySec * 1000, delaySec * 1000);
+            }
           } catch (e) {
-            console.error(`❌ Failed to send to ${lead.business_name}:`, e.message);
+            log(`❌ Failed to process lead ${lead.business_name}: ${e.message}`, 'error');
           }
-        } else {
-          console.warn(`⚠️  No draft found for ready lead: ${lead.business_name}`);
         }
       }
     } else {
-      console.log('❌ Gmail not connected. Emails generated but NOT sent. Please connect Gmail from the dashboard.');
+      log('❌ Gmail not authenticated. Connect Gmail from dashboard.', 'error');
     }
 
-    console.log('\n' + '═'.repeat(50));
-    console.log('✅ PIPELINE COMPLETE');
-    console.log(`   Discovered: ${results.discovered} | Scored: ${results.scored}`);
-    console.log(`   Emails Generated: ${results.emailsGenerated} | Sent: ${results.emailsSent}`);
-    
-    console.log('\n── Step 6/6: Daily Lead Report ──');
-    await sendDailyReport();
-    
-    console.log('═'.repeat(50) + '\n');
+    log('═'.repeat(50), 'info');
+    log(`✅ PIPELINE COMPLETE — Discovered: ${results.discovered} | Sent: ${results.emailsSent}`, 'success');
+    log('═'.repeat(50), 'info');
 
+    agentState.status = agentState.emailsSentToday >= cap ? 'cap_reached' : 'idle';
+    broadcastStatus();
     return { success: true, results };
+
   } catch (error) {
-    console.error('❌ Pipeline error:', error.message);
+    log(`❌ Pipeline error: ${error.message}`, 'error');
+    agentState.status = 'idle';
+    broadcastStatus();
     return { success: false, message: error.message };
   } finally {
-    isRunning = false;
+    agentState.isRunning = false;
   }
 }
 
+// ─── Follow-Ups ────────────────────────────────────────────────────────────────
 async function runFollowUps() {
   if (!isAuthenticated()) {
-    console.log('⚠️  Gmail not connected. Cannot send follow-ups.');
+    log('⚠️  Gmail not connected. Cannot send follow-ups.', 'warning');
     return 0;
   }
 
   const leads = getLeadsNeedingFollowUp();
   if (leads.length === 0) {
-    console.log('✅ No leads need follow-up right now.');
+    log('✅ No leads need follow-up right now.', 'info');
     return 0;
   }
 
-  console.log(`\n📩 Sending follow-ups to ${leads.length} leads...`);
+  const cap = getDailyCap();
+  log(`\n📩 Sending follow-ups to ${leads.length} leads...`, 'info');
   let sent = 0;
 
   for (const lead of leads) {
+    if (agentState.emailsSentToday >= cap) {
+      log('🛑 Daily cap reached. Stopping follow-ups.', 'warning');
+      break;
+    }
     const email = await generateEmailForLead(lead, true);
-    const success = await sendEmailToLead(lead, email, 1);
-    if (success) sent++;
-    await new Promise(r => setTimeout(r, 2000));
+    const success = await sendEmailSafe(lead, email, agentState.emailsSentToday, cap, 1);
+    if (success) {
+      sent++;
+      agentState.emailsSentToday++;
+      broadcastStatus();
+      // Anti-ban delay
+      const delaySec = Math.floor(Math.random() * 91) + 30;
+      await randomDelay(delaySec * 1000, delaySec * 1000);
+    }
   }
 
-  console.log(`✅ Sent ${sent} follow-up emails.`);
+  log(`✅ Sent ${sent} follow-up emails.`, 'success');
   return sent;
 }
 
+// ─── Main Scheduler ────────────────────────────────────────────────────────────
 function startScheduler() {
-  const discoveryCron = process.env.DISCOVERY_CRON || '0 9 * * *';
-  const followUpCron = process.env.FOLLOW_UP_CRON || '0 14 * * *';
+  log('🤖 Zynqora Edge Autonomous Agent starting...', 'info');
+  log(`📅 Schedule: every ${INTERVAL_MINUTES} min | Business hours: ${BUSINESS_HOUR_START}:00–${BUSINESS_HOUR_END}:00`, 'info');
 
-  if (cron.validate(discoveryCron)) {
-    cron.schedule(discoveryCron, () => {
-      console.log('\n⏰ Scheduled pipeline starting...');
-      runFullPipeline();
-    });
-    console.log(`📅 Discovery scheduled: ${discoveryCron}`);
-  }
+  // Initialize daily cap based on start date
+  agentState.dailyCap = getDailyCap();
+  log(`📈 Warm-up cap today: ${agentState.dailyCap} emails/day`, 'info');
 
-  if (cron.validate(followUpCron)) {
-    cron.schedule(followUpCron, () => {
-      console.log('\n⏰ Scheduled follow-ups starting...');
-      runFollowUps();
-    });
-    console.log(`📅 Follow-ups scheduled: ${followUpCron}`);
-  }
+  // Start status broadcast interval (every 5 seconds)
+  setInterval(() => {
+    if (agentState.status !== 'running') {
+      broadcastStatus();
+    }
+  }, 5000);
+
+  // Main cron: runs every INTERVAL_MINUTES, checks business hours internally
+  const cronExpr = `*/${INTERVAL_MINUTES} * * * *`;
+
+  cron.schedule(cronExpr, async () => {
+    if (!isBusinessHours()) {
+      agentState.status = 'sleeping';
+      const h = new Date().getHours();
+      log(`😴 Outside business hours (${h}:00). Agent sleeping.`, 'info');
+      broadcastStatus();
+      return;
+    }
+
+    if (agentState.emailsSentToday >= agentState.dailyCap) {
+      agentState.status = 'cap_reached';
+      log(`🛑 Daily cap reached (${agentState.emailsSentToday}/${agentState.dailyCap}). Resting until midnight.`, 'warning');
+      broadcastStatus();
+      return;
+    }
+
+    // Calculate next run
+    const next = new Date(Date.now() + INTERVAL_MINUTES * 60 * 1000);
+    agentState.nextRunAt = next.toISOString();
+
+    log(`\n⏰ Autonomous pipeline triggered at ${new Date().toLocaleTimeString()}`, 'info');
+    await runFullPipeline();
+  });
+
+  // Follow-ups cron: once a day at 2PM
+  cron.schedule('0 14 * * *', async () => {
+    if (!isBusinessHours()) return;
+    log('\n⏰ Scheduled follow-ups starting...', 'info');
+    await runFollowUps();
+  });
+
+  // Daily report at end of business day
+  cron.schedule('0 17 * * *', async () => {
+    log('\n📊 Sending daily activity report...', 'info');
+    try {
+      await sendDailyReport();
+    } catch (e) {
+      log(`⚠️  Daily report failed: ${e.message}`, 'warning');
+    }
+  });
+
+  // Midnight reset
+  scheduleMidnightReset();
+
+  log(`✅ Scheduler active. Next run in ~${INTERVAL_MINUTES} minutes (if business hours).`, 'success');
+  broadcastStatus();
 }
 
-module.exports = { runFullPipeline, runFollowUps, startScheduler };
+module.exports = {
+  runFullPipeline,
+  runFollowUps,
+  startScheduler,
+  getAgentStatus,
+  agentState
+};

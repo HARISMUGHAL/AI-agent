@@ -1,39 +1,79 @@
+/**
+ * api.js — REST API Routes
+ * Zynqora Edge Autonomous Agent
+ */
+
 const express = require('express');
-const router = express.Router();
-const { 
-  getStats, getAllLeads, getLeadById, getLeadsByNiche, 
+const router  = express.Router();
+
+const {
+  getStats, getAllLeads, getLeadById, getLeadsByNiche,
   getAllNiches, updateLeadStatus, updateLeadEmailAddress,
   getOutreachByLead, getLeadsByStatus
 } = require('../database/db');
 const { runDiscovery, searchBusinesses } = require('../services/googleMaps');
-const { scoreAllLeads, scoreLead } = require('../services/leadScorer');
-const { analyzeNiches } = require('../services/nicheAnalyzer');
+const { scoreAllLeads, scoreLead }       = require('../services/leadScorer');
+const { analyzeNiches }                  = require('../services/nicheAnalyzer');
 const { generateEmailForLead, generateAllEmails } = require('../services/emailGenerator');
 const { sendEmailToLead, isAuthenticated, getAuthUrl } = require('../services/gmailService');
-const { runFullPipeline, runFollowUps } = require('../services/scheduler');
+const { runFullPipeline, runFollowUps, getAgentStatus } = require('../services/scheduler');
 
-// ─── Dashboard Stats ────────────────────────────────────
+// ─── Agent Status (Real-Time) ────────────────────────────────────────────────
+router.get('/agent/status', (req, res) => {
+  try {
+    res.json(getAgentStatus());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Agent Daily Stats ───────────────────────────────────────────────────────
+router.get('/agent/daily-stats', (req, res) => {
+  try {
+    const status = getAgentStatus();
+    const dbStats = getStats();
+    res.json({
+      emails_sent_today: status.emails_sent_today,
+      leads_found_today: status.leads_found_today,
+      daily_cap:         status.daily_cap,
+      daily_target:      status.daily_target,
+      total_leads:       dbStats.totalLeads,
+      contacted:         dbStats.contacted,
+      responded:         dbStats.responded,
+      is_business_hours: status.is_business_hours,
+      agent_status:      status.status,
+      dashboard_name:    'Zynqora Edge'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Dashboard Stats ─────────────────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
   try {
     const stats = getStats();
     stats.gmailConnected = isAuthenticated();
     stats.apiKeysConfigured = {
       googleMaps: !!process.env.GOOGLE_MAPS_API_KEY && process.env.GOOGLE_MAPS_API_KEY !== 'your_google_maps_api_key_here',
-      gemini: !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here',
-      gmail: !!process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_ID !== 'your_gmail_client_id_here'
+      gemini:     !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here',
+      gmail:      !!process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_ID !== 'your_gmail_client_id_here'
     };
+    // Attach agent status
+    const agentStatus = getAgentStatus();
+    stats.agentStatus = agentStatus;
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ─── Leads ──────────────────────────────────────────────
+// ─── Leads ───────────────────────────────────────────────────────────────────
 router.get('/leads', (req, res) => {
   try {
     const { niche, status } = req.query;
     let leads;
-    if (niche) leads = getLeadsByNiche(niche);
+    if (niche)  leads = getLeadsByNiche(niche);
     else if (status) leads = getLeadsByStatus(status);
     else leads = getAllLeads();
     res.json(leads);
@@ -58,7 +98,7 @@ router.patch('/leads/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const { status, email } = req.body;
     if (status) updateLeadStatus(id, status);
-    if (email) updateLeadEmailAddress(id, email);
+    if (email)  updateLeadEmailAddress(id, email);
     const lead = getLeadById(id);
     res.json(lead);
   } catch (error) {
@@ -66,7 +106,7 @@ router.patch('/leads/:id', (req, res) => {
   }
 });
 
-// ─── Discovery ──────────────────────────────────────────
+// ─── Discovery ───────────────────────────────────────────────────────────────
 router.post('/leads/discover', async (req, res) => {
   try {
     const { niche, location } = req.body;
@@ -83,7 +123,7 @@ router.post('/leads/discover', async (req, res) => {
   }
 });
 
-// ─── Scoring ────────────────────────────────────────────
+// ─── Scoring ─────────────────────────────────────────────────────────────────
 router.post('/leads/score', async (req, res) => {
   try {
     const scored = await scoreAllLeads();
@@ -104,7 +144,7 @@ router.post('/leads/:id/score', async (req, res) => {
   }
 });
 
-// ─── Email Generation ───────────────────────────────────
+// ─── Email Generation ─────────────────────────────────────────────────────────
 router.post('/leads/:id/generate-email', async (req, res) => {
   try {
     const lead = getLeadById(parseInt(req.params.id));
@@ -125,16 +165,16 @@ router.post('/leads/generate-emails', async (req, res) => {
   }
 });
 
-// ─── Email Sending ──────────────────────────────────────
+// ─── Email Sending ────────────────────────────────────────────────────────────
 router.post('/leads/:id/send-email', async (req, res) => {
   try {
     const lead = getLeadById(parseInt(req.params.id));
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
-    
+
     let emailData = req.body.email;
     if (!emailData && lead.email_draft) emailData = JSON.parse(lead.email_draft);
     if (!emailData) emailData = await generateEmailForLead(lead);
-    
+
     const success = await sendEmailToLead(lead, emailData);
     res.json({ success });
   } catch (error) {
@@ -142,7 +182,7 @@ router.post('/leads/:id/send-email', async (req, res) => {
   }
 });
 
-// ─── Niches ─────────────────────────────────────────────
+// ─── Niches ───────────────────────────────────────────────────────────────────
 router.get('/niches', (req, res) => {
   try { res.json(getAllNiches()); }
   catch (error) { res.status(500).json({ error: error.message }); }
@@ -157,10 +197,11 @@ router.post('/niches/analyze', async (req, res) => {
   }
 });
 
-// ─── Pipeline ───────────────────────────────────────────
+// ─── Pipeline (Debug / Admin) ─────────────────────────────────────────────────
+// NOTE: The agent runs autonomously. These endpoints are for admin/debug use only.
 router.post('/pipeline/run', async (req, res) => {
   try {
-    res.json({ success: true, message: 'Pipeline started.' });
+    res.json({ success: true, message: 'Autonomous pipeline triggered manually (debug mode).' });
     runFullPipeline();
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -169,14 +210,14 @@ router.post('/pipeline/run', async (req, res) => {
 
 router.post('/pipeline/follow-ups', async (req, res) => {
   try {
-    res.json({ success: true, message: 'Follow-up pipeline started.' });
+    res.json({ success: true, message: 'Follow-up pipeline triggered manually.' });
     runFollowUps();
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ─── Gmail Auth ─────────────────────────────────────────
+// ─── Gmail Auth ───────────────────────────────────────────────────────────────
 router.get('/gmail/status', (req, res) => {
   res.json({ connected: isAuthenticated() });
 });

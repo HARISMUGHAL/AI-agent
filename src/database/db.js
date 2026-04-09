@@ -224,6 +224,24 @@ function getLeadsCreatedToday() {
   `);
 }
 
+/** Count emails sent today (from outreach_log) */
+function getEmailsSentToday() {
+  const result = queryOne(`
+    SELECT COUNT(*) as count FROM outreach_log
+    WHERE sent_at >= datetime('now', 'start of day')
+  `);
+  return result ? result.count : 0;
+}
+
+/** Count new leads found today */
+function getLeadsFoundToday() {
+  const result = queryOne(`
+    SELECT COUNT(*) as count FROM leads
+    WHERE created_at >= datetime('now', 'start of day')
+  `);
+  return result ? result.count : 0;
+}
+
 function getLeadsNeedingFollowUp() {
   return queryAll(`
     SELECT l.* FROM leads l
@@ -321,6 +339,8 @@ module.exports = {
   getReadyToContact,
   getLeadsCreatedToday,
   getLeadsNeedingFollowUp,
+  getEmailsSentToday,
+  getLeadsFoundToday,
   checkDuplicate,
   insertOutreach,
   getOutreachByLead,
