@@ -1,107 +1,124 @@
 /**
  * server.js — Zynqora Edge Autonomous Agent Server
- * Real-time dashboard via Socket.io
+ * Render-safe production version
  */
 
 require('dotenv').config();
-const http    = require('http');
+
+const http = require('http');
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const cors = require('cors');
+const path = require('path');
 const { Server } = require('socket.io');
 
-const { initDatabase }       = require('./database/db');
-const apiRoutes              = require('./routes/api');
+// Services
+const { initDatabase } = require('./database/db');
+const apiRoutes = require('./routes/api');
 const { handleAuthCallback } = require('./services/gmailService');
-const { startScheduler }     = require('./services/scheduler');
-const { initSocketService }  = require('./services/socketService');
-const { initSheetHeaders }   = require('./services/googleSheets');
+const { startScheduler } = require('./services/scheduler');
+const { initSocketService } = require('./services/socketService');
+const { initSheetHeaders } = require('./services/googleSheets');
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
-const io     = new Server(server, {
+
+const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
 const PORT = process.env.PORT || 3000;
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
+// ───────────────────────── Middleware ─────────────────────────
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
+// ───────────────────────── API Routes ─────────────────────────
 app.use('/api', apiRoutes);
 
-// ─── Gmail OAuth Callback ─────────────────────────────────────────────────────
+// ───────────────────────── Gmail OAuth ─────────────────────────
 app.get('/auth/callback', async (req, res) => {
   try {
     const { code } = req.query;
     if (!code) return res.status(400).send('Missing authorization code');
+
     await handleAuthCallback(code);
     res.redirect('/?gmail=connected');
-  } catch (error) {
-    console.error('Auth error:', error);
-    res.status(500).send(`Authentication failed: ${error.message}`);
+  } catch (err) {
+    console.error('Auth error:', err);
+    res.status(500).send('Authentication failed');
   }
 });
 
-// ─── Dashboard (root route) ───────────────────────────────────────────────────
+// ───────────────────────── Dashboard ─────────────────────────
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-// ─── SPA Catch-All Fallback (for Render / production) ────────────────────────
-// Any route not matched by API or OAuth falls back to the dashboard
+// ───────────────────────── Fallback ─────────────────────────
 app.get('*', (req, res) => {
-  const indexPath = path.join(__dirname, '..', 'public', 'index.html');
-  res.sendFile(indexPath, (err) => {
-    if (err) res.status(200).send('Zynqora Edge is LIVE 🚀');
-  });
+  res.sendFile(
+    path.join(__dirname, '..', 'public', 'index.html'),
+    (err) => {
+      if (err) res.status(200).send('Zynqora Edge is LIVE 🚀');
+    }
+  );
 });
 
-// ─── Socket.io Connection ─────────────────────────────────────────────────────
+// ───────────────────────── Socket.io ─────────────────────────
 io.on('connection', (socket) => {
-  console.log(`🔌 Dashboard client connected (${socket.id})`);
+  console.log(`🔌 Client connected: ${socket.id}`);
 
-  // Send current status immediately on connect
-  const { getAgentStatus } = require('./services/scheduler');
-  socket.emit('agent:status', getAgentStatus());
+  try {
+    const { getAgentStatus } = require('./services/scheduler');
+    socket.emit('agent:status', getAgentStatus());
+  } catch (e) {
+    console.log('Status emit error:', e.message);
+  }
 
   socket.on('disconnect', () => {
-    console.log(`🔌 Dashboard client disconnected (${socket.id})`);
+    console.log(`🔌 Client disconnected: ${socket.id}`);
   });
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// ───────────────────────── STARTUP (IMPORTANT FIX) ─────────────────────────
 async function start() {
-  await initDatabase();
+  try {
+    console.log('🚀 Starting Zynqora Edge...');
 
-  // Initialize Socket.io service (must be before scheduler starts)
-  initSocketService(io);
+    // ❗ NON-BLOCKING INIT (CRITICAL FOR RENDER)
+    initDatabase().catch(err =>
+      console.error('DB init failed:', err.message)
+    );
 
-  // Try to initialize Google Sheets headers (non-blocking)
-  initSheetHeaders().catch(e => console.log('ℹ️  Sheets not configured yet:', e.message));
+    initSocketService(io);
 
-  server.listen(PORT, () => {
-    console.log(`
+    initSheetHeaders().catch(err =>
+      console.log('Sheets not configured:', err.message)
+    );
+
+    // ✅ IMPORTANT: LISTEN FIRST (Render fix)
+    server.listen(PORT, () => {
+      console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
-║   ⚡  ZYNQORA EDGE — AUTONOMOUS AI OUTREACH AGENT    ║
+║   ⚡ ZYNQORA EDGE — AUTONOMOUS AI AGENT             ║
 ║                                                       ║
-║   Dashboard:  http://localhost:${PORT}                  ║
-║   API:        http://localhost:${PORT}/api               ║
-║   Mode:       Fully Autonomous                        ║
-║   Hours:      9:00 AM – 6:00 PM                      ║
+║   Dashboard: http://localhost:${PORT}                ║
+║   API:       /api                                     ║
+║   Mode:      Fully Autonomous                        ║
 ║                                                       ║
 ╚═══════════════════════════════════════════════════════╝
-    `);
+      `);
 
-    startScheduler();
-  });
+      // Start background tasks AFTER server is live
+      startScheduler();
+    });
+
+  } catch (err) {
+    console.error('Fatal startup error:', err);
+    process.exit(1);
+  }
 }
 
-start().catch(err => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+start();
