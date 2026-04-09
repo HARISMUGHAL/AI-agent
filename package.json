@@ -4,8 +4,7 @@
   "description": "Autonomous AI agent for finding and converting potential clients via Google Maps and email outreach",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch --watch-path=src src/server.js"
+    "start": "node src/server.js"
   },
   "keywords": [
     "ai",
@@ -20,7 +19,7 @@
     "@google/generative-ai": "^0.21.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "express": "^4.18.2",
     "googleapis": "^144.0.0",
     "node-cron": "^3.0.3",
