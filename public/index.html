@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexastra — AI Client Hunter</title>
+  <meta name="description" content="Autonomous AI agent for finding and converting potential clients">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ─── Sidebar ─── -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- 3D Robot Character -->
+    <div class="robot-container">
+      <div class="robot-scene">
+        <!-- Orbital rings -->
+        <div class="robot-orbit"></div>
+        <div class="robot-orbit-2"></div>
+        <!-- Head -->
+        <div class="robot-head">
+          <div class="robot-antenna"></div>
+          <div class="robot-visor"></div>
+          <div class="robot-eye left"></div>
+          <div class="robot-eye right"></div>
+          <div class="robot-mouth"></div>
+        </div>
+        <!-- Body -->
+        <div class="robot-body">
+          <div class="robot-chest"></div>
+          <div class="robot-panel left"></div>
+          <div class="robot-panel right"></div>
+        </div>
+        <!-- Arms -->
+        <div class="robot-arm left"></div>
+        <div class="robot-arm right"></div>
+      </div>
+      <div class="robot-status">
+        <div class="robot-status-dot"></div>
+        Agent Online
+      </div>
+    </div>
+
+    <!-- Brand Name -->
+    <div class="brand-name">Nexastra</div>
+    <div class="brand-sub">AI Client Hunter</div>
+
+    <!-- Nav -->
+    <nav class="sidebar-nav" style="margin-top: 16px;">
+      <a href="#" class="nav-item active" data-page="dashboard" id="nav-dashboard">
+        <span class="nav-icon">📊</span> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-page="leads" id="nav-leads">
+        <span class="nav-icon">🎯</span> Leads
+      </a>
+      <a href="#" class="nav-item" data-page="niches" id="nav-niches">
+        <span class="nav-icon">📂</span> Niches
+      </a>
+      <a href="#" class="nav-item" data-page="pipeline" id="nav-pipeline">
+        <span class="nav-icon">⚡</span> Pipeline
+      </a>
+      <a href="#" class="nav-item" data-page="settings" id="nav-settings">
+        <span class="nav-icon">⚙️</span> Settings
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="status-indicator" id="gmail-status">
+        <span class="status-dot offline"></span>
+        <span>Gmail: Disconnected</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── Main Content ─── -->
+  <main class="main-content">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <button class="menu-btn" id="menu-toggle">☰</button>
+        <h2 id="page-title">Dashboard</h2>
+      </div>
+      <div class="header-right">
+        <button class="btn btn-glow" id="btn-run-pipeline" onclick="runPipeline()">
+          ⚡ Run Pipeline
+        </button>
+      </div>
+    </header>
+
+    <!-- ─── Dashboard Page ─── -->
+    <section class="page active" id="page-dashboard">
+      <!-- Stats Cards -->
+      <div class="stats-grid">
+        <div class="stat-card gradient-1">
+          <div class="stat-icon">🎯</div>
+          <div class="stat-info">
+            <h3 id="stat-total-leads">0</h3>
+            <p>Total Leads</p>
+          </div>
+        </div>
+        <div class="stat-card gradient-2">
+          <div class="stat-icon">📤</div>
+          <div class="stat-info">
+            <h3 id="stat-contacted">0</h3>
+            <p>Contacted</p>
+          </div>
+        </div>
+        <div class="stat-card gradient-3">
+          <div class="stat-icon">💬</div>
+          <div class="stat-info">
+            <h3 id="stat-responded">0</h3>
+            <p>Responded</p>
+          </div>
+        </div>
+        <div class="stat-card gradient-4">
+          <div class="stat-icon">⭐</div>
+          <div class="stat-info">
+            <h3 id="stat-avg-score">0</h3>
+            <p>Avg Score</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Row -->
+      <div class="charts-row">
+        <div class="glass-card chart-card">
+          <h3>Status Breakdown</h3>
+          <div class="chart-container" id="status-chart"></div>
+        </div>
+        <div class="glass-card chart-card">
+          <h3>Service Distribution</h3>
+          <div class="chart-container" id="service-chart"></div>
+        </div>
+        <div class="glass-card chart-card">
+          <h3>Top Niches</h3>
+          <div class="chart-container" id="niche-chart"></div>
+        </div>
+      </div>
+
+      <!-- Recent Leads -->
+      <div class="glass-card">
+        <div class="card-header">
+          <h3>Recent Leads</h3>
+          <a href="#" class="view-all" onclick="navigateTo('leads')">View All →</a>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Business</th>
+                <th>Niche</th>
+                <th>Location</th>
+                <th>Score</th>
+                <th>Service</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="recent-leads-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Leads Page ─── -->
+    <section class="page" id="page-leads">
+      <div class="page-actions">
+        <div class="filter-group">
+          <select id="lead-filter-status" onchange="loadLeads()">
+            <option value="">All Statuses</option>
+            <option value="new">New</option>
+            <option value="scored">Scored</option>
+            <option value="email_ready">Email Ready</option>
+            <option value="contacted">Contacted</option>
+            <option value="followed_up">Followed Up</option>
+            <option value="responded">Responded</option>
+          </select>
+          <select id="lead-filter-niche" onchange="loadLeads()">
+            <option value="">All Niches</option>
+          </select>
+        </div>
+        <div class="action-buttons">
+          <button class="btn btn-secondary" onclick="discoverLeads()">🔍 Discover</button>
+          <button class="btn btn-secondary" onclick="scoreLeads()">📊 Score All</button>
+          <button class="btn btn-secondary" onclick="generateEmails()">✉️ Gen Emails</button>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Business</th>
+                <th>Niche</th>
+                <th>Location</th>
+                <th>Website</th>
+                <th>Score</th>
+                <th>Service</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="leads-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Niches Page ─── -->
+    <section class="page" id="page-niches">
+      <div class="page-actions">
+        <button class="btn btn-secondary" onclick="analyzeNiches()">🧠 Analyze Niches</button>
+      </div>
+      <div class="niches-grid" id="niches-grid"></div>
+    </section>
+
+    <!-- ─── Pipeline Page ─── -->
+    <section class="page" id="page-pipeline">
+      <div class="glass-card pipeline-card">
+        <h3>⚡ Automation Pipeline</h3>
+        <p class="pipeline-desc">Run the full automated pipeline: Discover → Score → Analyze → Generate Emails → Send</p>
+        <div class="pipeline-steps">
+          <div class="step">
+            <div class="step-number">01</div>
+            <div class="step-info">
+              <h4>🔍 Discover Leads</h4>
+              <p>Search Google Maps for businesses across all configured niches and locations</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="discoverLeads()">Run</button>
+          </div>
+          <div class="step">
+            <div class="step-number">02</div>
+            <div class="step-info">
+              <h4>📊 Score & Qualify</h4>
+              <p>AI analyzes each lead and scores them based on their need for digital solutions</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="scoreLeads()">Run</button>
+          </div>
+          <div class="step">
+            <div class="step-number">03</div>
+            <div class="step-info">
+              <h4>🧠 Analyze Niches</h4>
+              <p>Decide best service for each niche: AI Agent or WhatsApp Automation</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="analyzeNiches()">Run</button>
+          </div>
+          <div class="step">
+            <div class="step-number">04</div>
+            <div class="step-info">
+              <h4>✉️ Generate Pitches</h4>
+              <p>Create personalized email + WhatsApp pitches for qualified leads</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="generateEmails()">Run</button>
+          </div>
+          <div class="step">
+            <div class="step-number">05</div>
+            <div class="step-info">
+              <h4>📤 Send Outreach</h4>
+              <p>Send emails via Gmail (requires Gmail connection)</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" disabled id="btn-send-all">Run</button>
+          </div>
+        </div>
+        <div class="pipeline-full">
+          <button class="btn btn-glow btn-lg" onclick="runPipeline()">⚡ Run Full Pipeline</button>
+          <button class="btn btn-secondary btn-lg" onclick="runFollowUps()">📩 Send Follow-Ups</button>
+        </div>
+      </div>
+
+      <!-- Pipeline Log -->
+      <div class="glass-card">
+        <h3>📋 Activity Log</h3>
+        <div class="log-container" id="pipeline-log">
+          <div class="log-entry">Waiting for pipeline to run...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Settings Page ─── -->
+    <section class="page" id="page-settings">
+      <div class="glass-card">
+        <h3>⚙️ Configuration Status</h3>
+        <div class="settings-grid" id="settings-status"></div>
+      </div>
+      <div class="glass-card">
+        <h3>📧 Gmail Connection</h3>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Connect your Gmail account to enable automated email outreach.</p>
+        <button class="btn btn-glow" id="btn-connect-gmail" onclick="connectGmail()">
+          Connect Gmail
+        </button>
+      </div>
+      <div class="glass-card">
+        <h3>🔍 Quick Discovery</h3>
+        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Search for businesses in a specific niche and location.</p>
+        <div class="form-row">
+          <input type="text" id="discover-niche" placeholder="Niche (e.g. restaurants)" class="input">
+          <input type="text" id="discover-location" placeholder="Location (e.g. Dubai, UAE)" class="input">
+          <button class="btn btn-secondary" onclick="manualDiscover()">Search</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Lead Detail Modal -->
+    <div class="modal-overlay" id="lead-modal">
+      <div class="modal glass-card">
+        <button class="modal-close" onclick="closeModal()">✕</button>
+        <div id="modal-content"></div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast-container" id="toast-container"></div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

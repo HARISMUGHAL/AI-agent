@@ -1,0 +1,30 @@
+{
+  "name": "nexastra-client-hunter",
+  "version": "1.0.0",
+  "description": "Autonomous AI agent for finding and converting potential clients via Google Maps and email outreach",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch --watch-path=src src/server.js"
+  },
+  "keywords": [
+    "ai",
+    "lead-generation",
+    "google-maps",
+    "email-outreach",
+    "automation"
+  ],
+  "author": "Nexastra",
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.18.2",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3",
+    "open": "^10.1.0",
+    "sql.js": "^1.11.0"
+  }
+}
