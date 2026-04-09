@@ -5,7 +5,7 @@
  * Features:
  *  - Runs only during business hours (9AM–6PM local time)
  *  - Interval: every AGENT_RUN_INTERVAL_MINUTES (default 12 min)
- *  - Email warm-up: Day 1-3 → 20/day, Day 4-7 → 50/day, Day 8+ → 100/day
+ *  - Email warm-up: Day 1-3 → 40/day, Day 4-7 → 80/day, Day 8+ → 100–150/day (randomized)
  *  - Random delay between emails: 30–120 seconds
  *  - Retry with exponential backoff on send failure
  *  - Daily counter reset at midnight
@@ -32,7 +32,7 @@ const agentState = {
   leadsFoundToday: 0,
   lastRunAt: null,
   nextRunAt: null,
-  dailyCap: 20,
+  dailyCap: 40,
   agentStartDate: null,
   status: 'idle',        // 'idle' | 'running' | 'sleeping' | 'cap_reached'
   mode: 'fully_automatic',
@@ -43,9 +43,22 @@ const agentState = {
 const BUSINESS_HOUR_START = parseInt(process.env.BUSINESS_HOUR_START || '9');
 const BUSINESS_HOUR_END   = parseInt(process.env.BUSINESS_HOUR_END   || '18');
 const INTERVAL_MINUTES    = parseInt(process.env.AGENT_RUN_INTERVAL_MINUTES || '12');
-const MAX_DAILY_CAP       = 100;
+const MIN_DAILY_CAP = 100;  // Day 8+ minimum
+const MAX_DAILY_CAP = 150;  // Day 8+ maximum
 
 // ─── Warm-Up Logic ────────────────────────────────────────────────────────────
+/**
+ * Returns the daily email send target based on warm-up day count.
+ *  Day 1–3  → 40 emails/day
+ *  Day 4–7  → 80 emails/day
+ *  Day 8+   → Random between 100–150 emails/day (anti-pattern detection)
+ */
+function getDailyTarget(dayCount) {
+  if (dayCount <= 3) return 40;
+  if (dayCount <= 7) return 80;
+  return Math.floor(Math.random() * (MAX_DAILY_CAP - MIN_DAILY_CAP + 1)) + MIN_DAILY_CAP;
+}
+
 function getDailyCap() {
   if (!agentState.agentStartDate) {
     const stored = getSetting('agent_start_date');
@@ -62,9 +75,7 @@ function getDailyCap() {
     (now - agentState.agentStartDate) / (1000 * 60 * 60 * 24)
   );
 
-  if (daysSinceStart <= 2) return 20;      // Day 1–3
-  if (daysSinceStart <= 6) return 50;      // Day 4–7
-  return MAX_DAILY_CAP;                    // Day 8+
+  return getDailyTarget(daysSinceStart + 1); // +1 so Day 0 = Day 1
 }
 
 // ─── Business Hours Check ─────────────────────────────────────────────────────
@@ -86,8 +97,8 @@ function scheduleMidnightReset() {
     agentState.emailsSentToday = 0;
     agentState.leadsFoundToday = 0;
     agentState.status = 'idle';
-    agentState.dailyCap = getDailyCap();
-    log('🌅 Midnight reset: Daily counters cleared.', 'info');
+    agentState.dailyCap = getDailyCap(); // recalculates with fresh randomization for Day 8+
+    log(`🌅 Midnight reset: counters cleared. Today's target: ${agentState.dailyCap} emails.`, 'info');
     broadcastStatus();
   });
 }
@@ -104,17 +115,18 @@ function log(message, level = 'info') {
 function broadcastStatus() {
   agentState.dailyCap = getDailyCap();
   emitStatus({
-    status:            agentState.status,
-    mode:              agentState.mode,
-    emails_sent_today: agentState.emailsSentToday,
-    leads_found_today: agentState.leadsFoundToday,
-    daily_cap:         agentState.dailyCap,
-    last_run_at:       agentState.lastRunAt,
-    next_run_at:       agentState.nextRunAt,
-    is_business_hours: isBusinessHours(),
-    last_log:          agentState.lastLog,
-    daily_target:      MAX_DAILY_CAP,
-    dashboard_name:    'Zynqora Edge'
+    status:              agentState.status,
+    mode:                agentState.mode,
+    emails_sent_today:   agentState.emailsSentToday,
+    leads_found_today:   agentState.leadsFoundToday,
+    daily_cap:           agentState.dailyCap,
+    daily_target:        agentState.dailyCap,        // same value — dynamic per day
+    daily_target_range:  '100-150',                  // shown in dashboard after warm-up
+    last_run_at:         agentState.lastRunAt,
+    next_run_at:         agentState.nextRunAt,
+    is_business_hours:   isBusinessHours(),
+    last_log:            agentState.lastLog,
+    dashboard_name:      'Zynqora Edge'
   });
 }
 
@@ -122,20 +134,21 @@ function broadcastStatus() {
 function getAgentStatus() {
   agentState.dailyCap = getDailyCap();
   return {
-    status:            agentState.status,
-    mode:              agentState.mode,
-    emails_sent_today: agentState.emailsSentToday,
-    leads_found_today: agentState.leadsFoundToday,
-    daily_cap:         agentState.dailyCap,
-    daily_target:      MAX_DAILY_CAP,
-    last_run_at:       agentState.lastRunAt,
-    next_run_at:       agentState.nextRunAt,
-    is_business_hours: isBusinessHours(),
-    last_log:          agentState.lastLog,
-    dashboard_name:    'Zynqora Edge',
-    agent_mode:        'fully_automatic',
-    email_strategy:    'rate_limited_randomized',
-    realtime_updates:  true
+    status:              agentState.status,
+    mode:                agentState.mode,
+    emails_sent_today:   agentState.emailsSentToday,
+    leads_found_today:   agentState.leadsFoundToday,
+    daily_cap:           agentState.dailyCap,
+    daily_target:        agentState.dailyCap,        // current day's actual target
+    daily_target_range:  '100-150',                  // post-warmup range shown in UI
+    last_run_at:         agentState.lastRunAt,
+    next_run_at:         agentState.nextRunAt,
+    is_business_hours:   isBusinessHours(),
+    last_log:            agentState.lastLog,
+    dashboard_name:      'Zynqora Edge',
+    agent_mode:          'fully_automatic',
+    email_strategy:      'rate_limited_randomized',
+    realtime_updates:    true
   };
 }
 

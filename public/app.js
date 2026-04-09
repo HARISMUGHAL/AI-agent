@@ -140,6 +140,14 @@ function updateDailyProgress(sent, cap) {
   if (fill)  fill.style.width  = `${pct}%`;
   if (label) label.textContent = `${sent} / ${cap} emails sent today`;
   if (pctEl) pctEl.textContent = `${pct}%`;
+
+  // Update the footnote to show warm-up stage
+  const footnote = document.querySelector('.daily-progress-footnote');
+  if (footnote) {
+    footnote.textContent = cap <= 40 ? 'Warm-up: Day 1–3 (40/day)'
+      : cap <= 80 ? 'Warm-up: Day 4–7 (80/day)'
+      : `Full Send: Today’s Target ${cap} (range 100–150)`;
+  }
 }
 
 // ─── Pipeline Page ─────────────────────────────────────
@@ -547,7 +555,7 @@ async function loadSettings() {
     </div>
     <div class="setting-row">
       <span class="setting-name">📊 Daily Target</span>
-      <span class="setting-status configured">✅ 100 emails/day</span>
+      <span class="setting-status configured">✅ 100–150 emails/day (randomized)</span>
     </div>
     <div class="setting-row">
       <span class="setting-name">🛡️ Email Strategy</span>
