@@ -46,9 +46,18 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// ─── Dashboard (root route) ───────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+// ─── SPA Catch-All Fallback (for Render / production) ────────────────────────
+// Any route not matched by API or OAuth falls back to the dashboard
+app.get('*', (req, res) => {
+  const indexPath = path.join(__dirname, '..', 'public', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) res.status(200).send('Zynqora Edge is LIVE 🚀');
+  });
 });
 
 // ─── Socket.io Connection ─────────────────────────────────────────────────────
