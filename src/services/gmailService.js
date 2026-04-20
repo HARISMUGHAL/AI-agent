@@ -14,6 +14,8 @@
  *  - Operates at 70–80% of daily limit
  */
 
+require('dotenv').config(); // ensure env vars are loaded even if imported standalone
+
 const { google } = require('googleapis');
 const {
   insertOutreach,
@@ -44,7 +46,20 @@ function buildOAuth2Client(clientId, clientSecret, redirectUri, refreshToken) {
 function getAccountPool() {
   if (oauth2Clients) return oauth2Clients;
 
-  const redirectUri = process.env.GMAIL_REDIRECT_URI || 'http://localhost:3000/auth/callback';
+  // OAUTH FIX: redirect URI must come exclusively from the environment variable.
+  // A hardcoded fallback causes redirect_uri_mismatch when the env var is set.
+  const redirectUri = process.env.GMAIL_REDIRECT_URI;
+
+  // Temporary debug log — confirms which URI Google will receive
+  console.log('[OAuth] Using redirect URI:', redirectUri);
+
+  if (!redirectUri) {
+    console.error('[OAuth] ❌ GMAIL_REDIRECT_URI is not set in environment. OAuth will fail.');
+    // Return empty pool — isAuthenticated() will return false gracefully
+    oauth2Clients = [];
+    return oauth2Clients;
+  }
+
   oauth2Clients = [];
 
   // Primary account
