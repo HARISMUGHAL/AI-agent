@@ -29,7 +29,6 @@ const {
   recordEmailSentHealth,
   recordBounce,
   recordSpamComplaint,
-  recordSpamComplaint,
   recordSendError
 } = require('../database/db');
 const { rotateAccount } = require('./accountManager');
