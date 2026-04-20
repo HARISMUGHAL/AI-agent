@@ -116,9 +116,23 @@ async function initDatabase() {
     )
   `);
 
-  try {
-    db.run('ALTER TABLE leads ADD COLUMN whatsapp_draft TEXT');
-  } catch(e) {}
+  db.run(`
+    CREATE TABLE IF NOT EXISTS email_health (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      emails_sent INTEGER DEFAULT 0,
+      bounces INTEGER DEFAULT 0,
+      spam_complaints INTEGER DEFAULT 0,
+      errors INTEGER DEFAULT 0,
+      account_email TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  try { db.run('ALTER TABLE leads ADD COLUMN whatsapp_draft TEXT'); } catch(e) {}
+  try { db.run('ALTER TABLE outreach_log ADD COLUMN account_email TEXT'); } catch(e) {}
+  try { db.run('ALTER TABLE outreach_log ADD COLUMN bounce INTEGER DEFAULT 0'); } catch(e) {}
+  try { db.run('ALTER TABLE outreach_log ADD COLUMN spam_complaint INTEGER DEFAULT 0'); } catch(e) {}
 
   saveDb();
   console.log('✅ Database initialized.');
@@ -257,6 +271,107 @@ function checkDuplicate(place_id) {
   return queryOne('SELECT id FROM leads WHERE place_id = ?', [place_id]);
 }
 
+/**
+ * Check if an email address has already been contacted (dedup guard).
+ * Returns the outreach_log row if it exists, otherwise null.
+ */
+function checkEmailSentBefore(email) {
+  if (!email) return null;
+  return queryOne(`
+    SELECT o.id, o.sent_at FROM outreach_log o
+    JOIN leads l ON o.lead_id = l.id
+    WHERE l.email = ?
+    ORDER BY o.sent_at DESC LIMIT 1
+  `, [email]);
+}
+
+// ─── Warmup Day Persistence ──────────────────────────────
+/**
+ * Read the current warmup day (1-indexed).
+ * Initialises to day 1 if not yet set.
+ */
+function getWarmupDay() {
+  const stored = getSetting('warmup_day');
+  if (!stored) {
+    setSetting('warmup_day', '1');
+    setSetting('warmup_day_date', new Date().toDateString());
+    return 1;
+  }
+  // Advance day if the stored date is different from today
+  const storedDate  = getSetting('warmup_day_date') || '';
+  const today       = new Date().toDateString();
+  if (storedDate !== today) {
+    const nextDay = parseInt(stored, 10) + 1;
+    setSetting('warmup_day', String(nextDay));
+    setSetting('warmup_day_date', today);
+    return nextDay;
+  }
+  return parseInt(stored, 10);
+}
+
+/** Force-set the warmup day (useful for testing or manual override). */
+function setWarmupDay(day) {
+  setSetting('warmup_day', String(day));
+  setSetting('warmup_day_date', new Date().toDateString());
+}
+
+// ─── Health / Anti-Ban Tracking ─────────────────────────
+/** Upsert today's email health row. Returns the row. */
+function getTodayHealthRow(accountEmail = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  let row = queryOne('SELECT * FROM email_health WHERE date = ? AND account_email = ?', [today, accountEmail]);
+  if (!row) {
+    runSql('INSERT INTO email_health (date, account_email) VALUES (?, ?)', [today, accountEmail]);
+    row = queryOne('SELECT * FROM email_health WHERE date = ? AND account_email = ?', [today, accountEmail]);
+  }
+  return row;
+}
+
+function recordEmailSentHealth(accountEmail = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  getTodayHealthRow(accountEmail);
+  runSql('UPDATE email_health SET emails_sent = emails_sent + 1 WHERE date = ? AND account_email = ?', [today, accountEmail]);
+}
+
+function recordBounce(leadId, accountEmail = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  getTodayHealthRow(accountEmail);
+  runSql('UPDATE email_health SET bounces = bounces + 1 WHERE date = ? AND account_email = ?', [today, accountEmail]);
+  runSql('UPDATE outreach_log SET bounce = 1 WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [leadId]);
+  updateLeadStatus(leadId, 'bounced');
+}
+
+function recordSpamComplaint(leadId, accountEmail = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  getTodayHealthRow(accountEmail);
+  runSql('UPDATE email_health SET spam_complaints = spam_complaints + 1 WHERE date = ? AND account_email = ?', [today, accountEmail]);
+  runSql('UPDATE outreach_log SET spam_complaint = 1 WHERE lead_id = ? ORDER BY id DESC LIMIT 1', [leadId]);
+  updateLeadStatus(leadId, 'spam_complaint');
+}
+
+function recordSendError(accountEmail = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  getTodayHealthRow(accountEmail);
+  runSql('UPDATE email_health SET errors = errors + 1 WHERE date = ? AND account_email = ?', [today, accountEmail]);
+}
+
+/**
+ * Get today's health metrics for a specific account (or all accounts combined).
+ */
+function getTodayHealthMetrics(accountEmail = null) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (accountEmail) {
+    return queryOne('SELECT * FROM email_health WHERE date = ? AND account_email = ?', [today, accountEmail])
+      || { emails_sent: 0, bounces: 0, spam_complaints: 0, errors: 0 };
+  }
+  // Aggregate across all accounts
+  return queryOne(`
+    SELECT SUM(emails_sent) as emails_sent, SUM(bounces) as bounces,
+           SUM(spam_complaints) as spam_complaints, SUM(errors) as errors
+    FROM email_health WHERE date = ?
+  `, [today]) || { emails_sent: 0, bounces: 0, spam_complaints: 0, errors: 0 };
+}
+
 // ─── Outreach Operations ────────────────────────────────
 function insertOutreach(lead_id, email_subject, email_body, follow_up_number) {
   runSql(`INSERT INTO outreach_log (lead_id, email_subject, email_body, follow_up_number) VALUES (?, ?, ?, ?)`,
@@ -342,6 +457,7 @@ module.exports = {
   getEmailsSentToday,
   getLeadsFoundToday,
   checkDuplicate,
+  checkEmailSentBefore,
   insertOutreach,
   getOutreachByLead,
   upsertNiche,
@@ -350,6 +466,15 @@ module.exports = {
   getSetting,
   setSetting,
   getNicheData,
+  // Warmup
+  getWarmupDay,
+  setWarmupDay,
+  // Health
+  getTodayHealthMetrics,
+  recordEmailSentHealth,
+  recordBounce,
+  recordSpamComplaint,
+  recordSendError,
   saveDb,
   queryAll,
   queryOne
