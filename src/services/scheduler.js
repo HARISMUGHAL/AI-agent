@@ -25,6 +25,7 @@ const {
   getEmailsSentToday,
   getWarmupDay,
   getTodayHealthMetrics,
+  getBounceRateMetrics,
   getStats
 } = require('../database/db');
 const {
@@ -247,7 +248,7 @@ async function runFullPipeline() {
           0, // first touch
           (lead, newCount) => {
             results.emailsSent++;
-            agentState.emailsSentToday = newCount;
+            agentState.emailsSentToday = newCount; // kept live by callback
             emitEmailSent(lead, newCount, cap);
             log(`📤 Sent to ${lead.business_name} (${lead.email}) [${newCount}/${cap}]`, 'success');
             broadcastStatus();
@@ -259,8 +260,10 @@ async function runFullPipeline() {
           }
         );
 
-        results.emailsSent      = sent;
-        agentState.emailsSentToday += sent;
+        results.emailsSent = sent;
+        // RULE 7: Sync from DB as authoritative source — do NOT += sent again
+        // (the onSent callback already advanced agentState.emailsSentToday live)
+        agentState.emailsSentToday = getEmailsSentToday();
       }
     } else {
       log('❌ Gmail not authenticated. Connect Gmail from dashboard.', 'error');
@@ -326,12 +329,13 @@ async function runFollowUps() {
     cap,
     1, // follow-up number
     (lead, newCount) => {
-      agentState.emailsSentToday = newCount;
+      agentState.emailsSentToday = newCount; // kept live by callback
       broadcastStatus();
     }
   );
 
-  agentState.emailsSentToday += sent;
+  // RULE 7: Sync from DB — do NOT += sent (already advanced by onSent callback)
+  agentState.emailsSentToday = getEmailsSentToday();
   log(`✅ Sent ${sent} follow-up emails.`, 'success');
   return sent;
 }

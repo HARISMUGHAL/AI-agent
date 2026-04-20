@@ -287,25 +287,41 @@ function checkEmailSentBefore(email) {
 
 // ─── Warmup Day Persistence ──────────────────────────────
 /**
- * Read the current warmup day (1-indexed).
- * Initialises to day 1 if not yet set.
+ * RULE 1: Warmup day must increment ONLY ONCE per calendar day.
+ *
+ * In-process lock (_warmupDayIncrementedForDate) prevents multiple
+ * call-sites (scheduler, broadcastStatus, getWarmupStatus, etc.) from
+ * triggering a second increment on the same calendar day within the
+ * same Node.js process, even if the DB date-check passes momentarily
+ * due to async timing.
  */
+let _warmupDayIncrementedForDate = '';
+
 function getWarmupDay() {
+  const today = new Date().toDateString();
+
   const stored = getSetting('warmup_day');
   if (!stored) {
+    // First-ever call: initialise to Day 1
     setSetting('warmup_day', '1');
-    setSetting('warmup_day_date', new Date().toDateString());
+    setSetting('warmup_day_date', today);
+    _warmupDayIncrementedForDate = today;
     return 1;
   }
-  // Advance day if the stored date is different from today
-  const storedDate  = getSetting('warmup_day_date') || '';
-  const today       = new Date().toDateString();
-  if (storedDate !== today) {
+
+  const storedDate = getSetting('warmup_day_date') || '';
+
+  // Only increment if:
+  //  (a) The DB-persisted date differs from today, AND
+  //  (b) This process has NOT already incremented for today
+  if (storedDate !== today && _warmupDayIncrementedForDate !== today) {
     const nextDay = parseInt(stored, 10) + 1;
     setSetting('warmup_day', String(nextDay));
     setSetting('warmup_day_date', today);
+    _warmupDayIncrementedForDate = today; // lock for rest of process day
     return nextDay;
   }
+
   return parseInt(stored, 10);
 }
 
@@ -313,6 +329,7 @@ function getWarmupDay() {
 function setWarmupDay(day) {
   setSetting('warmup_day', String(day));
   setSetting('warmup_day_date', new Date().toDateString());
+  _warmupDayIncrementedForDate = new Date().toDateString(); // respect the forced value
 }
 
 // ─── Health / Anti-Ban Tracking ─────────────────────────
@@ -370,6 +387,19 @@ function getTodayHealthMetrics(accountEmail = null) {
            SUM(spam_complaints) as spam_complaints, SUM(errors) as errors
     FROM email_health WHERE date = ?
   `, [today]) || { emails_sent: 0, bounces: 0, spam_complaints: 0, errors: 0 };
+}
+
+/**
+ * RULE 3: Bounce rate = failedEmails / totalSent.
+ * Returns { bounceRate, totalSent, totalFailed } aggregated globally.
+ * 'failed' includes bounces + permanent errors (non-retryable sends).
+ */
+function getBounceRateMetrics() {
+  const m = getTodayHealthMetrics(null); // global aggregate
+  const totalSent   = m.emails_sent      || 0;
+  const totalFailed = (m.bounces || 0) + (m.errors || 0); // all failures
+  const bounceRate  = totalSent > 0 ? totalFailed / totalSent : 0;
+  return { bounceRate, totalSent, totalFailed, bounces: m.bounces || 0, errors: m.errors || 0 };
 }
 
 // ─── Outreach Operations ────────────────────────────────
@@ -471,6 +501,7 @@ module.exports = {
   setWarmupDay,
   // Health
   getTodayHealthMetrics,
+  getBounceRateMetrics,
   recordEmailSentHealth,
   recordBounce,
   recordSpamComplaint,

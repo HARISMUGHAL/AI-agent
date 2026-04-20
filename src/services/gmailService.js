@@ -23,6 +23,7 @@ const {
   checkEmailSentBefore,
   getWarmupDay,
   getTodayHealthMetrics,
+  getBounceRateMetrics,
   recordEmailSentHealth,
   recordBounce,
   recordSpamComplaint,
@@ -109,23 +110,22 @@ function getWarmupTarget(day, accountType = 'gmail') {
 
 // ─── Anti-Ban Health Check ───────────────────────────────────────────────────
 /**
- * Evaluate current health metrics.
+ * RULE 2: Health check is GLOBAL (across all accounts).
+ * RULE 3: Bounce rate = (bounces + permanent errors) / totalSent.
+ *
  * Returns: { safe: bool, action: 'stop'|'reduce'|'pause'|'ok', reason: string }
  */
-function evaluateHealth(accountEmail = null) {
-  const m = getTodayHealthMetrics(accountEmail);
-  const sent = m.emails_sent || 0;
+function evaluateHealth() {
+  // Always aggregate globally — never scoped to a single account
+  const { bounceRate, totalSent, totalFailed } = getBounceRateMetrics();
+  const m = getTodayHealthMetrics(null);
 
-  if (sent === 0) return { safe: true, action: 'ok', reason: 'No emails sent yet' };
-
-  const bounceRate = (m.bounces || 0) / sent;
-  const errorRate  = (m.errors  || 0) / sent;
-
-  if (bounceRate > 0.05) {
+  // RULE 7: Hard STOP when bounce rate exceeds 5%
+  if (totalSent >= 5 && bounceRate > 0.05) {
     return {
       safe: false,
       action: 'stop',
-      reason: `Bounce rate ${(bounceRate * 100).toFixed(1)}% exceeds 5% threshold`
+      reason: `Bounce rate ${(bounceRate * 100).toFixed(1)}% (${totalFailed}/${totalSent}) exceeds 5% threshold — HARD STOP`
     };
   }
 
@@ -137,7 +137,9 @@ function evaluateHealth(accountEmail = null) {
     };
   }
 
-  if (errorRate > 0.20 && sent >= 5) {
+  // Error spike check (uses raw error count, min 5 sends to be meaningful)
+  const errorRate = totalSent >= 5 ? (m.errors || 0) / totalSent : 0;
+  if (errorRate > 0.20) {
     return {
       safe: false,
       action: 'pause',
@@ -244,27 +246,62 @@ function betweenBatchDelay() {
 // ─── Account Switcher ────────────────────────────────────────────────────────
 let _currentAccountIdx = 0;
 let _emailsOnCurrentAccount = 0;
-let _switchEvery = 3; // randomized per switch
+let _switchEvery = randomInt(3, 7); // randomized from the start
 
 function getNextAccount() {
   const pool = getAccountPool();
-  if (pool.length <= 1) return pool[0];
+  if (pool.length <= 1) return pool[0] || null;
 
   if (_emailsOnCurrentAccount >= _switchEvery) {
+    // RULE 6: Switch randomly every 3–7 emails
     _currentAccountIdx = (_currentAccountIdx + 1) % pool.length;
     _emailsOnCurrentAccount = 0;
-    _switchEvery = randomInt(3, 7); // new random threshold
+    _switchEvery = randomInt(3, 7); // new random threshold each time
     console.log(`🔄 Switched to account: ${pool[_currentAccountIdx].email} (next switch in ${_switchEvery} emails)`);
   }
 
   return pool[_currentAccountIdx];
 }
 
+// ─── Consecutive Failure Tracker (Rule 4) ────────────────────────────────────
+/**
+ * RULE 4: Track consecutive failures.
+ * On success → reset counter.
+ * If consecutive failures exceed CONSECUTIVE_FAIL_THRESHOLD → trigger cooldown.
+ */
+const CONSECUTIVE_FAIL_THRESHOLD = 5;
+const CONSECUTIVE_FAIL_COOLDOWN_MS = 10 * 60 * 1000; // 10-minute cooldown
+let _consecutiveFailures = 0;
+let _cooldownUntil = 0; // epoch ms; 0 = not in cooldown
+
+function recordConsecutiveSuccess() {
+  _consecutiveFailures = 0; // reset on any success
+}
+
+function recordConsecutiveFailure() {
+  _consecutiveFailures++;
+  if (_consecutiveFailures >= CONSECUTIVE_FAIL_THRESHOLD) {
+    _cooldownUntil = Date.now() + CONSECUTIVE_FAIL_COOLDOWN_MS;
+    console.error(`🚨 ${_consecutiveFailures} consecutive failures — cooldown until ${new Date(_cooldownUntil).toLocaleTimeString()}`);
+    _consecutiveFailures = 0; // reset after triggering cooldown
+  }
+}
+
+async function waitIfCooldown() {
+  if (_cooldownUntil > Date.now()) {
+    const waitMs = _cooldownUntil - Date.now();
+    console.warn(`⏸️  Consecutive-failure cooldown active. Waiting ${Math.ceil(waitMs / 1000)}s...`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+}
+
 // ─── Core Safe Send ──────────────────────────────────────────────────────────
 /**
  * Send a single email safely with:
- *  - Duplicate check
- *  - Health/anti-ban check
+ *  - Global duplicate check (RULE 2)
+ *  - Global health/anti-ban check (RULE 2, 7)
+ *  - Consecutive failure cooldown (RULE 4)
+ *  - All permanent failures count toward bounce rate (RULE 3)
  *  - Exponential backoff retry
  *  - Health metric recording
  */
@@ -274,16 +311,24 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
     return false;
   }
 
-  // ── 5. Duplicate guard ──────────────────────────────────────────────────
+  // RULE 7: Hard STOP if daily cap already reached
+  if (emailsSentToday >= dailyCap) {
+    console.log(`🛑 Daily cap reached (${emailsSentToday}/${dailyCap}). Hard stop.`);
+    return 'HALT';
+  }
+
+  // RULE 2: GLOBAL duplicate check — across all accounts
   const alreadySent = checkEmailSentBefore(lead.email);
   if (alreadySent) {
     console.log(`🔁 Duplicate skipped: ${lead.email} already contacted on ${alreadySent.sent_at}`);
     return false;
   }
 
-  // ── 4. Anti-ban health check ────────────────────────────────────────────
-  const account = getNextAccount();
-  const health  = evaluateHealth(account ? account.email : null);
+  // RULE 4: Wait out any consecutive-failure cooldown before attempting
+  await waitIfCooldown();
+
+  // RULE 2 + 7: GLOBAL anti-ban health check (not per-account)
+  const health = evaluateHealth();
 
   if (!health.safe) {
     console.error(`🚨 Anti-ban: ${health.action.toUpperCase()} — ${health.reason}`);
@@ -291,12 +336,14 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
   }
 
   if (health.action === 'reduce') {
-    // Skip ~30% of sends to reduce volume
+    // Skip ~30% of sends to reduce volume on spam complaints
     if (Math.random() < 0.30) {
       console.log(`📉 Volume reduced due to spam complaint. Skipping this send.`);
       return false;
     }
   }
+
+  const account = getNextAccount();
 
   // ── Retry with exponential backoff ─────────────────────────────────────
   const MAX_RETRIES = 3;
@@ -314,6 +361,7 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
       insertOutreach(lead.id, emailData.subject, emailData.body, followUpNumber);
       updateLeadStatus(lead.id, followUpNumber > 0 ? 'followed_up' : 'contacted');
       recordEmailSentHealth(account ? account.email : '');
+      recordConsecutiveSuccess(); // RULE 4: reset failure streak
 
       if (account) {
         account.sentThisSession++;
@@ -325,6 +373,8 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
 
     } catch (error) {
       attempt++;
+      const accountKey = account ? account.email : '';
+
       const isPermError = error.message && (
         error.message.includes('invalid_grant') ||
         error.message.includes('Token has been expired') ||
@@ -333,24 +383,41 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
 
       if (isPermError) {
         console.error(`🔑 Auth error for ${lead.business_name}: ${error.message} — skipping.`);
-        recordSendError(account ? account.email : '');
+        // RULE 3: permanent auth failure counts toward failure rate
+        recordSendError(accountKey);
+        recordBounce(lead.id, accountKey); // counts as failed send in bounce rate
+        recordConsecutiveFailure(); // RULE 4
         return false;
       }
 
-      // Check for bounce signals in error
-      if (error.message && (error.message.includes('550') || error.message.includes('no such user'))) {
-        console.warn(`📭 Bounce detected for ${lead.email}`);
-        recordBounce(lead.id, account ? account.email : '');
+      // SMTP bounce signals (5xx, user unknown, mailbox not found)
+      if (error.message && (
+        error.message.includes('550') ||
+        error.message.includes('551') ||
+        error.message.includes('553') ||
+        error.message.includes('no such user') ||
+        error.message.includes('mailbox') ||
+        error.message.includes('does not exist')
+      )) {
+        console.warn(`📭 Bounce detected for ${lead.email}: ${error.message}`);
+        recordBounce(lead.id, accountKey); // RULE 3: explicit bounce
+        recordConsecutiveFailure(); // RULE 4
         return false;
       }
 
-      recordSendError(account ? account.email : '');
-      const backoffMs = Math.pow(2, attempt) * 5000;
+      // Transient error — record and retry
+      recordSendError(accountKey);
+      const backoffMs = Math.pow(2, attempt) * 5000; // 5s, 10s, 20s
       console.error(`⚠️  Send attempt ${attempt}/${MAX_RETRIES} failed for ${lead.business_name}: ${error.message}`);
 
       if (attempt < MAX_RETRIES) {
         console.log(`🔄 Retrying in ${backoffMs / 1000}s...`);
         await new Promise(r => setTimeout(r, backoffMs));
+      } else {
+        // All retries exhausted — permanent failure
+        // RULE 3: exhausted retries count toward failure rate
+        recordBounce(lead.id, accountKey);
+        recordConsecutiveFailure(); // RULE 4
       }
     }
   }
