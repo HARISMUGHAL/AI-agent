@@ -39,6 +39,7 @@ const {
 const { sendDailyReport }  = require('./reportGenerator');
 const { emitStatus, emitLog, emitLeadFound, emitEmailSent } = require('./socketService');
 const { updateLeadScoreAndStatus } = require('./googleSheets');
+const { processInbox } = require('./replyHandler');
 
 // ─── Agent State ──────────────────────────────────────────────────────────────
 const agentState = {
@@ -206,6 +207,14 @@ async function runFullPipeline() {
     log(`🚀 ZYNQORA EDGE — PIPELINE (Warmup Day ${agentState.warmupDay} | Cap: ${cap})`, 'info');
     log('═'.repeat(50), 'info');
 
+    // Step 0: Handle Inbox (run before anything else to halt follow-ups if they replied)
+    log('── Step 0: Reply Detection ──', 'info');
+    if (isAuthenticated()) {
+      await processInbox();
+    } else {
+      log('⚠️  Gmail not connected. Skipping reply detection.', 'warning');
+    }
+
     // Step 1: Discover (CONTROLLED — pass remaining quota so we only fetch what's needed)
     log('── Step 1/5: Lead Discovery ──', 'info');
     const remaining_before_discovery = cap - agentState.emailsSentToday;
@@ -323,14 +332,31 @@ async function runFollowUps() {
 
   log(`\n📩 Follow-ups: ${leads.length} leads eligible | Remaining cap: ${remaining}`, 'info');
 
-  // Generate email drafts for follow-up leads
+  // Phase 3: Use pre-generated follow_up from whatsapp_draft if available.
+  // It was stored at email-generation time (2–3 days ago) — dispatch it now.
+  // Only fall back to live AI generation if the stored draft is missing.
   const prepared = [];
   for (const lead of leads.slice(0, remaining)) {
     try {
-      const email = await generateEmailForLead(lead, true);
-      prepared.push({ ...lead, email_draft: JSON.stringify(email) });
+      let emailData;
+
+      const storedFollowUp = lead.whatsapp_draft ? (() => {
+        try { return JSON.parse(lead.whatsapp_draft); } catch { return null; }
+      })() : null;
+
+      if (storedFollowUp && storedFollowUp.subject && storedFollowUp.body) {
+        // Use pre-generated follow-up (Phase 3 primary path)
+        emailData = { subject: storedFollowUp.subject, body: storedFollowUp.body };
+        log(`📩 Using stored follow-up for ${lead.business_name}`, 'info');
+      } else {
+        // Fallback: generate fresh follow-up if stored draft is missing
+        emailData = await generateEmailForLead(lead, true);
+        log(`📩 Generated live follow-up for ${lead.business_name}`, 'info');
+      }
+
+      prepared.push({ ...lead, email_draft: JSON.stringify(emailData) });
     } catch (e) {
-      log(`⚠️  Could not generate follow-up for ${lead.business_name}: ${e.message}`, 'warning');
+      log(`⚠️  Could not prepare follow-up for ${lead.business_name}: ${e.message}`, 'warning');
     }
   }
 

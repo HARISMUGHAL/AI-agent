@@ -134,6 +134,13 @@ async function initDatabase() {
   try { db.run('ALTER TABLE outreach_log ADD COLUMN bounce INTEGER DEFAULT 0'); } catch(e) {}
   try { db.run('ALTER TABLE outreach_log ADD COLUMN spam_complaint INTEGER DEFAULT 0'); } catch(e) {}
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS processed_messages (
+      message_id TEXT PRIMARY KEY,
+      processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   saveDb();
   console.log('✅ Database initialized.');
   return db;
@@ -271,6 +278,11 @@ function checkDuplicate(place_id) {
   return queryOne('SELECT id FROM leads WHERE place_id = ?', [place_id]);
 }
 
+function getLeadByEmail(email) {
+  if (!email) return null;
+  return queryOne('SELECT * FROM leads WHERE email = ? COLLATE NOCASE', [email]);
+}
+
 /**
  * Check if an email address has already been contacted (dedup guard).
  * Returns the outreach_log row if it exists, otherwise null.
@@ -280,9 +292,23 @@ function checkEmailSentBefore(email) {
   return queryOne(`
     SELECT o.id, o.sent_at FROM outreach_log o
     JOIN leads l ON o.lead_id = l.id
-    WHERE l.email = ?
+    WHERE l.email = ? COLLATE NOCASE
     ORDER BY o.sent_at DESC LIMIT 1
   `, [email]);
+}
+
+// ─── Reply Tracking ─────────────────────────────────────
+function isMessageProcessed(messageId) {
+  const row = queryOne('SELECT message_id FROM processed_messages WHERE message_id = ?', [messageId]);
+  return !!row;
+}
+
+function markMessageProcessed(messageId) {
+  runSql('INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)', [messageId]);
+}
+
+function updateOutreachResponseStatus(leadId, status) {
+  runSql(`UPDATE outreach_log SET response_status = ? WHERE lead_id = ? ORDER BY id DESC LIMIT 1`, [status, leadId]);
 }
 
 // ─── Warmup Day Persistence ──────────────────────────────
@@ -490,6 +516,10 @@ module.exports = {
   checkEmailSentBefore,
   insertOutreach,
   getOutreachByLead,
+  getLeadByEmail,
+  isMessageProcessed,
+  markMessageProcessed,
+  updateOutreachResponseStatus,
   upsertNiche,
   getAllNiches,
   getStats,

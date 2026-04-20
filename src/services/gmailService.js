@@ -179,6 +179,7 @@ function getAuthUrl() {
     prompt: 'consent',
     scope: [
       'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.modify', // REQUIRED FOR READING/REPLYING
       'https://www.googleapis.com/auth/spreadsheets'
     ]
   });
@@ -204,18 +205,26 @@ function isAuthenticated() {
 }
 
 // ─── Low-Level Send ─────────────────────────────────────────────────────────
-async function sendEmailViaAccount(account, to, subject, body) {
+async function sendEmailViaAccount(account, to, subject, body, options = {}) {
   const gmail = google.gmail({ version: 'v1', auth: account.client });
 
   const emailLines = [
-    `From: ${account.name} <${account.email}>`,
+    `From: "${account.name}" <${account.email}>`,
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${subject}`
+  ];
+
+  if (options.messageId) {
+    emailLines.push(`In-Reply-To: ${options.messageId}`);
+    emailLines.push(`References: ${options.messageId}`);
+  }
+
+  emailLines.push(
     'Content-Type: text/plain; charset=utf-8',
     'MIME-Version: 1.0',
     '',
     body
-  ];
+  );
 
   const rawMessage = Buffer.from(emailLines.join('\r\n'))
     .toString('base64')
@@ -223,9 +232,14 @@ async function sendEmailViaAccount(account, to, subject, body) {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 
+  const requestBody = { raw: rawMessage };
+  if (options.threadId) {
+    requestBody.threadId = options.threadId;
+  }
+
   return await gmail.users.messages.send({
     userId: 'me',
-    requestBody: { raw: rawMessage }
+    requestBody
   });
 }
 
@@ -564,23 +578,112 @@ async function sendEmailToLead(lead, emailData, followUpNumber = 0) {
   }
 }
 
+// ─── Inbox Reader Methods ────────────────────────────────────────────────────
+async function fetchUnreadReplies() {
+  const pool = getAccountPool();
+  const allMessages = [];
+
+  for (const account of pool) {
+    try {
+      const gmail = google.gmail({ version: 'v1', auth: account.client });
+      
+      const res = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'is:unread in:inbox',
+        maxResults: 20
+      });
+
+      if (!res.data.messages) continue;
+
+      for (const msg of res.data.messages) {
+        const fullMsg = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'full'
+        });
+
+        // Parse headers
+        const headers = fullMsg.data.payload.headers;
+        const subject = headers.find(h => h.name === 'Subject')?.value || '';
+        const fromHeader = headers.find(h => h.name === 'From')?.value || '';
+        const toHeader = headers.find(h => h.name === 'To')?.value || '';
+        const messageId = headers.find(h => h.name === 'Message-ID')?.value || msg.id;
+
+        // Extract raw email address from "From" header via regex
+        const fromMatch = fromHeader.match(/<(.+?)>|([^\s@]+@[^\s@]+\.[^\s@]+)/);
+        const fromEmail = fromMatch ? (fromMatch[1] || fromMatch[2]) : fromHeader;
+
+        // Basic payload decoding (prefer plain text)
+        let body = '';
+        const parts = fullMsg.data.payload.parts;
+        if (parts && parts.length > 0) {
+          const textPart = parts.find(p => p.mimeType === 'text/plain');
+          if (textPart && textPart.body && textPart.body.data) {
+            body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
+          } else if (parts[0].body && parts[0].body.data) {
+            body = Buffer.from(parts[0].body.data, 'base64').toString('utf-8');
+          }
+        } else if (fullMsg.data.payload.body && fullMsg.data.payload.body.data) {
+            body = Buffer.from(fullMsg.data.payload.body.data, 'base64').toString('utf-8');
+        }
+
+        allMessages.push({
+          id: msg.id,
+          threadId: msg.threadId,
+          messageId: messageId,
+          subject,
+          from: fromEmail,
+          to: toHeader,
+          body: body.trim(),
+          account
+        });
+      }
+    } catch (e) {
+      if (e.message.includes('insufficient data') || e.message.includes('Insufficient Permission')) {
+        console.warn(`[OAuth] Missing gmail.modify scope for ${account.email} — reconnect required to process replies.`);
+      } else {
+        console.error(`[Gmail] Error fetching unread for ${account.email}:`, e.message);
+      }
+    }
+  }
+
+  return allMessages;
+}
+
+async function markMessageAsRead(account, id) {
+  try {
+    const gmail = google.gmail({ version: 'v1', auth: account.client });
+    await gmail.users.messages.modify({
+      userId: 'me',
+      id: id,
+      requestBody: {
+        removeLabelIds: ['UNREAD']
+      }
+    });
+  } catch (e) {
+    console.error(`[Gmail] Failed to mark ${id} as read:`, e.message);
+  }
+}
+
 module.exports = {
-  // Auth
   getAuthUrl,
   handleAuthCallback,
   isAuthenticated,
-  getOAuth2Client,
-  // Send
+  getAccountPool,
+
   sendEmail,
-  sendEmailToLead,
+  sendEmailViaAccount,
   sendEmailSafe,
   sendBatch,
-  // Warmup / Health
+  
+  fetchUnreadReplies,
+  markMessageAsRead,
+
   getWarmupTarget,
   getWarmupStatus,
   evaluateHealth,
+  
   // Exposed for testing
-  getAccountPool,
   betweenEmailDelay,
   betweenBatchDelay
 };
