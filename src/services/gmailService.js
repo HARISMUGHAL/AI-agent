@@ -29,8 +29,10 @@ const {
   recordEmailSentHealth,
   recordBounce,
   recordSpamComplaint,
+  recordSpamComplaint,
   recordSendError
 } = require('../database/db');
+const { rotateAccount } = require('./accountManager');
 
 // ─── OAuth Client Pool ──────────────────────────────────────────────────────
 // Supports multiple Gmail accounts — add more via env vars GMAIL_ACCOUNT_2_*, etc.
@@ -273,23 +275,33 @@ function betweenBatchDelay() {
 }
 
 // ─── Account Switcher ────────────────────────────────────────────────────────
-let _currentAccountIdx = 0;
 let _emailsOnCurrentAccount = 0;
-let _switchEvery = randomInt(3, 7); // randomized from the start
+let _switchEvery = randomInt(3, 7);
+let _currentAccount = null;
 
-function getNextAccount() {
+function getActiveAccount() {
   const pool = getAccountPool();
-  if (pool.length <= 1) return pool[0] || null;
+  if (pool.length === 0) return null;
 
-  if (_emailsOnCurrentAccount >= _switchEvery) {
-    // RULE 6: Switch randomly every 3–7 emails
-    _currentAccountIdx = (_currentAccountIdx + 1) % pool.length;
-    _emailsOnCurrentAccount = 0;
-    _switchEvery = randomInt(3, 7); // new random threshold each time
-    console.log(`🔄 Switched to account: ${pool[_currentAccountIdx].email} (next switch in ${_switchEvery} emails)`);
+  // Single account fast path
+  if (pool.length === 1) {
+    const single = pool[0];
+    return rotateAccount([single]); // still pass through health check
   }
 
-  return pool[_currentAccountIdx];
+  // Time to switch? Or no account yet?
+  if (!_currentAccount || _emailsOnCurrentAccount >= _switchEvery) {
+    _currentAccount = rotateAccount(pool);
+    _emailsOnCurrentAccount = 0;
+    _switchEvery = randomInt(3, 7);
+    if (_currentAccount) {
+      console.log(`🔄 Switched to account: ${_currentAccount.email} (next switch in ${_switchEvery} emails)`);
+    } else {
+      console.log(`❌ No healthy accounts available.`);
+    }
+  }
+
+  return _currentAccount;
 }
 
 // ─── Consecutive Failure Tracker (Rule 4) ────────────────────────────────────
@@ -356,23 +368,30 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
   // RULE 4: Wait out any consecutive-failure cooldown before attempting
   await waitIfCooldown();
 
-  // RULE 2 + 7: GLOBAL anti-ban health check (not per-account)
+  // Fetch account dynamically using accountManager
+  const pool = getAccountPool();
+  const account = getActiveAccount();
+
+  if (!account && pool.length > 0) {
+    // There are accounts, but NONE are healthy
+    console.error(`🚨 FAIL-SAFE: No healthy accounts available. System pausing.`);
+    return 'HALT';
+  }
+
+  // Global Check
   const health = evaluateHealth();
 
   if (!health.safe) {
-    console.error(`🚨 Anti-ban: ${health.action.toUpperCase()} — ${health.reason}`);
+    console.error(`🚨 Global Anti-ban: ${health.action.toUpperCase()} — ${health.reason}`);
     if (health.action === 'stop' || health.action === 'pause') return 'HALT';
   }
 
   if (health.action === 'reduce') {
-    // Skip ~30% of sends to reduce volume on spam complaints
     if (Math.random() < 0.30) {
-      console.log(`📉 Volume reduced due to spam complaint. Skipping this send.`);
+      console.log(`📉 Volume reduced globally. Skipping this send.`);
       return false;
     }
   }
-
-  const account = getNextAccount();
 
   // ── Retry with exponential backoff ─────────────────────────────────────
   const MAX_RETRIES = 3;

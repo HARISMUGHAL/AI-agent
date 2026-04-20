@@ -9,13 +9,14 @@ const router  = express.Router();
 const {
   getStats, getAllLeads, getLeadById, getLeadsByNiche,
   getAllNiches, updateLeadStatus, updateLeadEmailAddress,
-  getOutreachByLead, getLeadsByStatus
+  getOutreachByLead, getLeadsByStatus, getAnalyticsSummary
 } = require('../database/db');
+const { getAccountTelemetry } = require('../services/accountManager');
 const { runDiscovery, searchBusinesses } = require('../services/googleMaps');
 const { scoreAllLeads, scoreLead }       = require('../services/leadScorer');
 const { analyzeNiches }                  = require('../services/nicheAnalyzer');
 const { generateEmailForLead, generateAllEmails } = require('../services/emailGenerator');
-const { sendEmailToLead, isAuthenticated, getAuthUrl } = require('../services/gmailService');
+const { sendEmailToLead, isAuthenticated, getAuthUrl, getAccountPool } = require('../services/gmailService');
 const { runFullPipeline, runFollowUps, getAgentStatus } = require('../services/scheduler');
 
 // ─── Agent Status (Real-Time) ────────────────────────────────────────────────
@@ -59,10 +60,28 @@ router.get('/dashboard', (req, res) => {
       gemini:     !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here',
       gmail:      !!process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_ID !== 'your_gmail_client_id_here'
     };
-    // Attach agent status
-    const agentStatus = getAgentStatus();
-    stats.agentStatus = agentStatus;
+    stats.agentStatus = getAgentStatus();
     res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Phase 5 Performance Endpoints
+router.get('/dashboard/summary', (req, res) => {
+  try {
+    const summary = getAnalyticsSummary();
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/dashboard/accounts', (req, res) => {
+  try {
+    const pool = getAccountPool();
+    const accounts = getAccountTelemetry(pool);
+    res.json({ accounts });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

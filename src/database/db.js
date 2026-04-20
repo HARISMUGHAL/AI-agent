@@ -134,6 +134,12 @@ async function initDatabase() {
   try { db.run('ALTER TABLE outreach_log ADD COLUMN bounce INTEGER DEFAULT 0'); } catch(e) {}
   try { db.run('ALTER TABLE outreach_log ADD COLUMN spam_complaint INTEGER DEFAULT 0'); } catch(e) {}
 
+  // Phase 5: Revenue Tracking
+  try { 
+    db.run('ALTER TABLE leads ADD COLUMN deal_value REAL DEFAULT 0'); 
+    db.run('UPDATE leads SET deal_value = 0 WHERE deal_value IS NULL');
+  } catch(e) {}
+
   db.run(`
     CREATE TABLE IF NOT EXISTS processed_messages (
       message_id TEXT PRIMARY KEY,
@@ -235,6 +241,10 @@ function getUnscoredLeads() {
 
 function getReadyToContact() {
   return queryAll("SELECT * FROM leads WHERE score >= 50 AND status = 'scored' AND email IS NOT NULL AND email != '' ORDER BY score DESC");
+}
+
+function getClosingStageLeads() {
+  return queryAll("SELECT * FROM leads WHERE status = 'closing_stage' ORDER BY updated_at DESC");
 }
 
 function getLeadsCreatedToday() {
@@ -473,6 +483,31 @@ function getStats() {
   return { totalLeads, contacted, responded, scored, avgScore: Math.round(avgScore), topNiches, recentLeads, statusBreakdown, serviceBreakdown };
 }
 
+// ─── Phase 5 Analytics ──────────────────────────────────
+function getAnalyticsSummary() {
+  const m = getTodayHealthMetrics(null);
+  const totalSent = queryOne("SELECT COUNT(*) as count FROM outreach_log")?.count || 0;
+  const replies = queryOne("SELECT COUNT(*) as count FROM outreach_log WHERE response_status != 'pending'")?.count || 0;
+  const interested = queryOne("SELECT COUNT(*) as count FROM outreach_log WHERE response_status = 'interested'")?.count || 0;
+  
+  const totalRevenueRow = queryOne('SELECT SUM(deal_value) as total FROM leads WHERE status = "closing_stage"');
+  const totalRevenue = totalRevenueRow?.total || 0;
+
+  const conversionRate = totalSent > 0 ? ((interested / totalSent) * 100).toFixed(2) : 0;
+  const bounceRateStats = getBounceRateMetrics();
+
+  return {
+    totalSent,
+    replies,
+    interested,
+    conversionRate: parseFloat(conversionRate),
+    totalRevenue,
+    todaySent: m.emails_sent || 0,
+    todayBounces: m.bounces || 0,
+    globalBounceRate: (bounceRateStats.bounceRate * 100).toFixed(2) + '%'
+  };
+}
+
 // ─── Settings ───────────────────────────────────────────
 function getSetting(key) {
   const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]);
@@ -508,6 +543,7 @@ module.exports = {
   getLeadsByNiche,
   getUnscoredLeads,
   getReadyToContact,
+  getClosingStageLeads,
   getLeadsCreatedToday,
   getLeadsNeedingFollowUp,
   getEmailsSentToday,
@@ -523,6 +559,7 @@ module.exports = {
   upsertNiche,
   getAllNiches,
   getStats,
+  getAnalyticsSummary,
   getSetting,
   setSetting,
   getNicheData,

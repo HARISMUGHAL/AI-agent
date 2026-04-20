@@ -26,6 +26,7 @@ const {
   getWarmupDay,
   getTodayHealthMetrics,
   getBounceRateMetrics,
+  getClosingStageLeads,
   getStats
 } = require('../database/db');
 const {
@@ -34,6 +35,7 @@ const {
   isAuthenticated,
   getWarmupTarget,
   getWarmupStatus,
+  getAccountPool,
   evaluateHealth
 } = require('./gmailService');
 const { sendDailyReport }  = require('./reportGenerator');
@@ -208,11 +210,32 @@ async function runFullPipeline() {
     log('═'.repeat(50), 'info');
 
     // Step 0: Handle Inbox (run before anything else to halt follow-ups if they replied)
-    log('── Step 0: Reply Detection ──', 'info');
+    log('── Step 0: Reply Detection & Hot Leads ──', 'info');
     if (isAuthenticated()) {
       await processInbox();
+      
+      const hotLeads = getClosingStageLeads();
+      if (hotLeads.length > 0) {
+        log(`🔥 HOT LEAD PRIORITY: ${hotLeads.length} leads in closing stage!`, 'success');
+        hotLeads.forEach((l, idx) => {
+          log(`   [${idx+1}] ${l.business_name} (${l.email}) — Action Required`, 'warning');
+        });
+      }
     } else {
       log('⚠️  Gmail not connected. Skipping reply detection.', 'warning');
+    }
+
+    // ── Phase 5: Smart Scaling Safety ──
+    const pool = getAccountPool();
+    let dynamicHardCap = 0;
+    
+    if (pool.length > 0) {
+      // Calculate absolute system ceiling based on connected account types
+      dynamicHardCap = pool.reduce((sum, acc) => sum + (acc.type === 'gmail' ? 150 : 250), 0);
+      if (cap > dynamicHardCap) {
+        log(`⚖️  Scaling Safety: Warmup target (${cap}) exceeds available hard limits. Capping to ${dynamicHardCap}.`, 'warning');
+        cap = dynamicHardCap; // Prevent exponential runaway
+      }
     }
 
     // Step 1: Discover (CONTROLLED — pass remaining quota so we only fetch what's needed)
