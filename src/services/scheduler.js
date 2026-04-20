@@ -38,6 +38,7 @@ const {
 } = require('./gmailService');
 const { sendDailyReport }  = require('./reportGenerator');
 const { emitStatus, emitLog, emitLeadFound, emitEmailSent } = require('./socketService');
+const { updateLeadScoreAndStatus } = require('./googleSheets');
 
 // ─── Agent State ──────────────────────────────────────────────────────────────
 const agentState = {
@@ -205,11 +206,14 @@ async function runFullPipeline() {
     log(`🚀 ZYNQORA EDGE — PIPELINE (Warmup Day ${agentState.warmupDay} | Cap: ${cap})`, 'info');
     log('═'.repeat(50), 'info');
 
-    // Step 1: Discover
+    // Step 1: Discover (CONTROLLED — pass remaining quota so we only fetch what's needed)
     log('── Step 1/5: Lead Discovery ──', 'info');
-    results.discovered = await runDiscovery();
+    const remaining_before_discovery = cap - agentState.emailsSentToday;
+    // Fetch with a small buffer (1.3×) to compensate for quality filtering rejections
+    const discoveryQuota = Math.ceil(remaining_before_discovery * 1.3);
+    results.discovered = await runDiscovery(discoveryQuota);
     agentState.leadsFoundToday += results.discovered;
-    log(`✅ Discovered ${results.discovered} new leads.`, 'success');
+    log(`✅ Discovery complete: ${results.discovered} valid leads saved.`, 'success');
     broadcastStatus();
 
     // Step 2: Score
@@ -253,6 +257,10 @@ async function runFullPipeline() {
             log(`📤 Sent to ${lead.business_name} (${lead.email}) [${newCount}/${cap}]`, 'success');
             broadcastStatus();
 
+            // RULE 8: Update Google Sheets with score and final status
+            updateLeadScoreAndStatus(lead.email, lead.score || 0, 'sent')
+              .catch(e => log(`⚠️  Sheet update failed for ${lead.email}: ${e.message}`, 'warning'));
+
             // Re-run health check after each send — HALT fast if needed
             if (!systemHealthCheck()) {
               log('🚨 Anti-ban halt mid-batch. Outreach stopped.', 'error');
@@ -261,8 +269,7 @@ async function runFullPipeline() {
         );
 
         results.emailsSent = sent;
-        // RULE 7: Sync from DB as authoritative source — do NOT += sent again
-        // (the onSent callback already advanced agentState.emailsSentToday live)
+        // Sync from DB as authoritative source (onSent callback advanced the counter live)
         agentState.emailsSentToday = getEmailsSentToday();
       }
     } else {
@@ -270,7 +277,11 @@ async function runFullPipeline() {
     }
 
     log('═'.repeat(50), 'info');
-    log(`✅ PIPELINE COMPLETE — Discovered: ${results.discovered} | Sent: ${results.emailsSent}`, 'success');
+    log(`✅ PIPELINE COMPLETE`, 'success');
+    log(`   🔍 Leads discovered:    ${results.discovered}`, 'info');
+    log(`   📧 Emails generated:   ${results.emailsGenerated}`, 'info');
+    log(`   📤 Emails sent:        ${results.emailsSent}`, 'success');
+    log(`   📊 Daily progress:     ${agentState.emailsSentToday}/${cap}`, 'info');
     log('═'.repeat(50), 'info');
 
     agentState.status = agentState.emailsSentToday >= cap ? 'cap_reached' : 'idle';

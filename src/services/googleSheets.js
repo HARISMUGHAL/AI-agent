@@ -13,7 +13,7 @@ const { google } = require('googleapis');
 const { getOAuth2Client } = require('./gmailService');
 
 const SHEET_RANGE    = 'Sheet1';
-const HEADERS        = ['Date Found', 'Business Name', 'Niche', 'Location', 'Email', 'Phone', 'Website', 'Rating', 'Reviews', 'Status', 'Outreach Status'];
+const HEADERS        = ['Date Found', 'Business Name', 'Niche', 'Location', 'Email', 'Phone', 'Website', 'Rating', 'Reviews', 'Score', 'Status', 'Outreach Status'];
 const MAX_ROWS_SCAN  = 1000; // How many rows to scan for duplicates
 
 /**
@@ -36,7 +36,7 @@ async function initSheetHeaders() {
   try {
     await ctx.sheets.spreadsheets.values.update({
       spreadsheetId: ctx.spreadsheetId,
-      range: `${SHEET_RANGE}!A1:K1`,
+      range: `${SHEET_RANGE}!A1:L1`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [HEADERS] }
     });
@@ -100,13 +100,14 @@ async function syncLeadToSheets(lead) {
       lead.website        || 'N/A',
       lead.rating         || 0,
       lead.review_count   || 0,
-      lead.status         || 'new',
-      'pending'           // Outreach Status
+      lead.score          || 0,     // Column J: Score
+      lead.status         || 'new', // Column K: Status
+      'pending'                     // Column L: Outreach Status
     ]];
 
     const response = await ctx.sheets.spreadsheets.values.append({
       spreadsheetId: ctx.spreadsheetId,
-      range: `${SHEET_RANGE}!A:K`,
+      range: `${SHEET_RANGE}!A:L`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values }
     });
@@ -121,8 +122,8 @@ async function syncLeadToSheets(lead) {
 }
 
 /**
- * Update the "Outreach Status" column (column K) for an existing lead row.
- * Status values: 'pending' | 'sent' | 'replied' | 'followed_up'
+ * Update the "Outreach Status" column (column L) for an existing lead row.
+ * Status values: 'pending' | 'sent' | 'replied' | 'followed_up' | 'skipped' | 'bounced'
  */
 async function updateLeadStatusInSheet(email, outreachStatus) {
   if (!email) return { success: false, message: 'No email provided' };
@@ -137,7 +138,7 @@ async function updateLeadStatusInSheet(email, outreachStatus) {
 
     await ctx.sheets.spreadsheets.values.update({
       spreadsheetId: ctx.spreadsheetId,
-      range: `${SHEET_RANGE}!K${rowNumber}`,
+      range: `${SHEET_RANGE}!L${rowNumber}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[outreachStatus]] }
     });
@@ -146,6 +147,46 @@ async function updateLeadStatusInSheet(email, outreachStatus) {
     return { success: true };
   } catch (error) {
     console.error(`❌ Sheet status update error:`, error.message);
+    return { success: false, message: error.message };
+  }
+}
+
+/**
+ * Phase 2: Update score AND outreach status together for a lead row.
+ * Writes to columns J (Score) and L (Outreach Status).
+ *
+ * @param {string} email          Lead email (used to locate row)
+ * @param {number} score          AI/rule score (0–100)
+ * @param {string} outreachStatus 'sent' | 'skipped' | 'bounced' | 'spam_complaint'
+ */
+async function updateLeadScoreAndStatus(email, score, outreachStatus) {
+  if (!email) return { success: false, message: 'No email provided' };
+  const ctx = getSheetsClient();
+  if (!ctx) return { success: false, message: 'Google Sheet not configured' };
+
+  try {
+    const rowNumber = await findLeadRowByEmail(email);
+    if (!rowNumber) {
+      // Row doesn't exist yet — not an error, just not synced
+      return { success: false, message: 'Lead not found in sheet — may not have been synced yet' };
+    }
+
+    // Write score (col J = 10) and outreach status (col L = 12) in one batch
+    await ctx.sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: ctx.spreadsheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: [
+          { range: `${SHEET_RANGE}!J${rowNumber}`, values: [[score]] },
+          { range: `${SHEET_RANGE}!L${rowNumber}`, values: [[outreachStatus]] }
+        ]
+      }
+    });
+
+    console.log(`📊 Sheet updated: ${email} → score=${score}, status=${outreachStatus} (row ${rowNumber})`);
+    return { success: true };
+  } catch (error) {
+    console.error(`❌ Sheet score/status update error:`, error.message);
     return { success: false, message: error.message };
   }
 }
@@ -171,7 +212,7 @@ async function batchSyncLeads(leads) {
 
     // Filter out duplicates
     const newLeads = leads.filter(l => {
-      if (!l.email) return true; // No email = can't dedup, include it
+      if (!l.email) return true; // No email = can’t dedup, include it
       return !existingEmails.has(l.email.toLowerCase());
     });
 
@@ -190,13 +231,14 @@ async function batchSyncLeads(leads) {
       lead.website        || 'N/A',
       lead.rating         || 0,
       lead.review_count   || 0,
-      lead.status         || 'new',
-      'pending'
+      lead.score          || 0,     // Column J: Score
+      lead.status         || 'new', // Column K: Status
+      'pending'                     // Column L: Outreach Status
     ]);
 
     await ctx.sheets.spreadsheets.values.append({
       spreadsheetId: ctx.spreadsheetId,
-      range: `${SHEET_RANGE}!A:K`,
+      range: `${SHEET_RANGE}!A:L`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values }
     });
@@ -213,6 +255,7 @@ module.exports = {
   syncLeadToSheets,
   initSheetHeaders,
   updateLeadStatusInSheet,
+  updateLeadScoreAndStatus,
   batchSyncLeads,
   findLeadRowByEmail
 };

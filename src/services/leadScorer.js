@@ -1,5 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { updateLeadScore, getUnscoredLeads } = require('../database/db');
+const { updateLeadScore, updateLeadStatus, getUnscoredLeads } = require('../database/db');
+
+const MIN_LEAD_SCORE = 60; // Reject leads scoring below this threshold
 
 let genAI = null;
 
@@ -91,7 +93,8 @@ function basicScore(lead) {
 }
 
 /**
- * Score all unscored leads
+ * Score all unscored leads.
+ * Leads scoring below MIN_LEAD_SCORE are marked 'skipped' immediately.
  */
 async function scoreAllLeads() {
   const leads = getUnscoredLeads();
@@ -100,18 +103,30 @@ async function scoreAllLeads() {
     return 0;
   }
 
-  console.log(`\n📊 Scoring ${leads.length} leads...`);
-  let scored = 0;
+  console.log(`\n📊 Scoring ${leads.length} leads (threshold: ≥${MIN_LEAD_SCORE})...`);
+  let scored       = 0;
+  let passed       = 0;
+  let rejected     = 0;
 
   for (const lead of leads) {
-    await scoreLead(lead);
+    const analysis = await scoreLead(lead);
     scored++;
+
+    // RULE 5 + strict filtering: drop low-quality leads from the pipeline
+    if (analysis.score < MIN_LEAD_SCORE) {
+      updateLeadStatus(lead.id, 'skipped');
+      rejected++;
+      console.log(`   📉 Rejected (score ${analysis.score} < ${MIN_LEAD_SCORE}): ${lead.business_name}`);
+    } else {
+      passed++;
+    }
+
     await new Promise(r => setTimeout(r, 1500));
-    if (scored % 10 === 0) console.log(`   Scored ${scored}/${leads.length}...`);
+    if (scored % 10 === 0) console.log(`   Scored ${scored}/${leads.length}... (passed: ${passed}, rejected: ${rejected})`);
   }
 
-  console.log(`✅ Scored ${scored} leads.`);
-  return scored;
+  console.log(`✅ Scoring complete: ${scored} total | ${passed} passed | ${rejected} rejected (score < ${MIN_LEAD_SCORE})`);
+  return passed; // Return only count that passed the threshold
 }
 
 module.exports = { scoreLead, scoreAllLeads };
