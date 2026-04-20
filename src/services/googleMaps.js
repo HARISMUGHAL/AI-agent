@@ -34,6 +34,19 @@ const TARGET_NICHES_BONUS = [
   'dental', 'spa', 'law', 'auto repair', 'tutoring', 'pet grooming'
 ];
 
+// STRICT COMPLIANCE: Approved Operating Regions Only
+const ALLOWED_REGIONS = [
+  'united arab emirates', 'uae', 'saudi arabia', 'ksa', 'qatar', 
+  'united kingdom', 'uk', 'canada', 'italy', 'spain', 
+  'netherlands', 'sweden', 'poland', 'australia'
+];
+
+function isRegionAllowed(locationString) {
+  if (!locationString) return false;
+  const lower = locationString.toLowerCase();
+  return ALLOWED_REGIONS.some(region => lower.includes(region));
+}
+
 // ─── Email Validator ──────────────────────────────────────────────────────────
 /**
  * Returns true only if the string is a valid, usable email address.
@@ -48,12 +61,11 @@ function isValidEmail(email) {
   const emailRegex = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
   if (!emailRegex.test(trimmed)) return false;
 
-  // Reject known junk/system addresses
   const junkPatterns = [
     'example.com', 'test.com', 'noreply', 'no-reply', 'donotreply',
     'sentry.io', 'wix.com', 'squarespace.com', 'wordpress.com',
     '@localhost', '.png', '.jpg', '.gif', 'privacy@', 'legal@',
-    'abuse@', 'postmaster@', 'webmaster@'
+    'abuse@', 'postmaster@', 'webmaster@', 'support@', 'info@google'
   ];
   if (junkPatterns.some(p => trimmed.includes(p))) return false;
 
@@ -84,6 +96,16 @@ function qualityFilter(lead) {
   const reviews = parseInt(lead.review_count) || 0;
   if (reviews < MIN_REVIEWS) {
     return { pass: false, reason: `only ${reviews} reviews (minimum ${MIN_REVIEWS})` };
+  }
+
+  // Website OR Improvement opportunity check
+  if (!lead.website && rating > 4.2) {
+    return { pass: false, reason: 'no website and rating too high (no clear improvement angle)' };
+  }
+
+  // Strict Regional Compliance Enforcement
+  if (!isRegionAllowed(lead.address) && !isRegionAllowed(lead.location)) {
+    return { pass: false, reason: `region blocked, out of approved operating zones` };
   }
 
   return { pass: true, reason: 'passed' };
