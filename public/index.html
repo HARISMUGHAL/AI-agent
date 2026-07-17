@@ -1,390 +1,94 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Zynqora Edge — Autonomous AI Outreach Agent</title>
-  <meta name="description" content="Zynqora Edge — Fully autonomous AI agent for intelligent lead generation and email outreach">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Zynqora Edge Data Leads</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-
-  <!-- ─── Sidebar ─── -->
-  <aside class="sidebar" id="sidebar">
-
-    <!-- 3D Robot Character -->
-    <div class="robot-container">
-      <div class="robot-scene">
-        <!-- Orbital rings -->
-        <div class="robot-orbit"></div>
-        <div class="robot-orbit-2"></div>
-        <!-- Head -->
-        <div class="robot-head">
-          <div class="robot-antenna"></div>
-          <div class="robot-visor"></div>
-          <div class="robot-eye left"></div>
-          <div class="robot-eye right"></div>
-          <div class="robot-mouth"></div>
-        </div>
-        <!-- Body -->
-        <div class="robot-body">
-          <div class="robot-chest"></div>
-          <div class="robot-panel left"></div>
-          <div class="robot-panel right"></div>
-        </div>
-        <!-- Arms -->
-        <div class="robot-arm left"></div>
-        <div class="robot-arm right"></div>
-      </div>
-      <div class="robot-status">
-        <div class="robot-status-dot" id="agent-status-dot"></div>
-        <span id="agent-status-label">Agent Online</span>
-      </div>
-    </div>
-
-    <!-- Brand Name -->
-    <div class="brand-name">Zynqora Edge</div>
-    <div class="brand-sub">Autonomous AI Outreach</div>
-
-    <!-- Nav -->
-    <nav class="sidebar-nav" style="margin-top: 16px;">
-      <a href="#" class="nav-item active" data-page="dashboard" id="nav-dashboard">
-        <span class="nav-icon">📊</span> Dashboard
-      </a>
-      <a href="#" class="nav-item" data-page="leads" id="nav-leads">
-        <span class="nav-icon">🎯</span> Leads
-      </a>
-      <a href="#" class="nav-item" data-page="niches" id="nav-niches">
-        <span class="nav-icon">📂</span> Niches
-      </a>
-      <a href="#" class="nav-item" data-page="pipeline" id="nav-pipeline">
-        <span class="nav-icon">⚡</span> Pipeline
-      </a>
-      <a href="#" class="nav-item" data-page="settings" id="nav-settings">
-        <span class="nav-icon">⚙️</span> Settings
-      </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <div class="status-indicator" id="gmail-status">
-        <span class="status-dot offline"></span>
-        <span>Gmail: Disconnected</span>
-      </div>
-      <div class="status-indicator" id="socket-status" style="margin-top:6px">
-        <span class="status-dot offline" id="socket-dot"></span>
-        <span id="socket-label">Connecting...</span>
-      </div>
-    </div>
-  </aside>
-
-  <!-- ─── Main Content ─── -->
-  <main class="main-content">
-    <!-- Header -->
-    <header class="header">
-      <div class="header-left">
-        <button class="menu-btn" id="menu-toggle">☰</button>
-        <h2 id="page-title">Dashboard</h2>
-      </div>
-      <div class="header-right">
-        <!-- Real-time Agent Status Bar -->
-        <div class="agent-status-bar" id="agent-status-bar">
-          <div class="agent-stat">
-            <span class="agent-stat-value" id="bar-emails-sent">0</span>
-            <span class="agent-stat-label">Sent Today</span>
-          </div>
-          <div class="agent-stat-divider"></div>
-          <div class="agent-stat">
-            <span class="agent-stat-value" id="bar-daily-cap">20</span>
-            <span class="agent-stat-label">Daily Cap</span>
-          </div>
-          <div class="agent-stat-divider"></div>
-          <div class="agent-stat">
-            <span class="agent-stat-value" id="bar-leads-today">0</span>
-            <span class="agent-stat-label">Leads Today</span>
-          </div>
-          <div class="agent-stat-divider"></div>
-          <div class="agent-stat">
-            <span class="agent-stat-value" id="bar-agent-state" style="font-size:0.7rem">IDLE</span>
-            <span class="agent-stat-label">Agent Mode</span>
-          </div>
-        </div>
-      </div>
+<body class="data-dashboard">
+  <main class="data-shell">
+    <header class="data-header">
+      <div><p class="eyebrow">Zynqora Edge</p><h1>Business Lead Intelligence</h1><p>Google Maps-first, data-only collection with source-backed verification. No outreach is performed.</p></div>
+      <span class="status-pill good" id="mode-status">Data Mode: Active</span>
     </header>
 
-    <!-- ─── Dashboard Page ─── -->
-    <section class="page active" id="page-dashboard">
-      <!-- Stats Cards -->
-      <div class="stats-grid">
-        <div class="stat-card gradient-1">
-          <div class="stat-icon">🎯</div>
-          <div class="stat-info">
-            <h3 id="stat-total-leads">0</h3>
-            <p>Total Leads</p>
-          </div>
-        </div>
-        <div class="stat-card gradient-2">
-          <div class="stat-icon">📤</div>
-          <div class="stat-info">
-            <h3 id="stat-contacted">0</h3>
-            <p>Contacted</p>
-          </div>
-        </div>
-        <div class="stat-card gradient-3">
-          <div class="stat-icon">💬</div>
-          <div class="stat-info">
-            <h3 id="stat-responded">0</h3>
-            <p>Responded</p>
-          </div>
-        </div>
-        <div class="stat-card gradient-4">
-          <div class="stat-icon">⭐</div>
-          <div class="stat-info">
-            <h3 id="stat-avg-score">0</h3>
-            <p>Avg Score</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Daily Progress Bar -->
-      <div class="glass-card" style="padding: 20px 24px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <h3 style="margin:0; font-size:1rem;">📬 Daily Outreach Progress</h3>
-          <span id="daily-progress-label" style="font-size:0.85rem; color: var(--text-muted);">0 / 20 emails sent today</span>
-        </div>
-        <div class="daily-progress-track">
-          <div class="daily-progress-fill" id="daily-progress-fill" style="width:0%"></div>
-        </div>
-        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:0.78rem; color:var(--text-muted);">
-          <span class="daily-progress-footnote">Warm-up Mode Active</span>
-          <span id="daily-progress-pct">0%</span>
-        </div>
-      </div>
-
-      <!-- Live Activity Log -->
-      <div class="glass-card">
-        <div class="card-header">
-          <h3>⚡ Live Agent Activity</h3>
-          <span class="live-badge">● LIVE</span>
-        </div>
-        <div class="log-container" id="live-activity-log" style="max-height:160px;">
-          <div class="log-entry log-info">Waiting for agent activity...</div>
-        </div>
-      </div>
-
-      <!-- Charts Row -->
-      <div class="charts-row">
-        <div class="glass-card chart-card">
-          <h3>Status Breakdown</h3>
-          <div class="chart-container" id="status-chart"></div>
-        </div>
-        <div class="glass-card chart-card">
-          <h3>Service Distribution</h3>
-          <div class="chart-container" id="service-chart"></div>
-        </div>
-        <div class="glass-card chart-card">
-          <h3>Top Niches</h3>
-          <div class="chart-container" id="niche-chart"></div>
-        </div>
-      </div>
-
-      <!-- Recent Leads -->
-      <div class="glass-card">
-        <div class="card-header">
-          <h3>Recent Leads</h3>
-          <a href="#" class="view-all" onclick="navigateTo('leads')">View All →</a>
-        </div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Business</th>
-                <th>Niche</th>
-                <th>Location</th>
-                <th>Score</th>
-                <th>Service</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="recent-leads-table"></tbody>
-          </table>
-        </div>
-      </div>
+    <section class="data-actions">
+      <button id="test-maps">Test Google Maps API</button>
+      <button id="test-sheets">Test Google Sheets Connection</button>
+      <button id="start-run" class="primary">Start Full Discovery</button>
+      <button id="start-us">Start US Only</button>
+      <button id="start-uk">Start UK Only</button>
+      <button id="pause-run">Pause</button>
+      <button id="resume-run">Resume</button>
+      <button id="export-us">Export US Excel</button>
+      <button id="export-uk">Export UK Excel</button>
     </section>
 
-    <!-- ─── Leads Page ─── -->
-    <section class="page" id="page-leads">
-      <div class="page-actions">
-        <div class="filter-group">
-          <select id="lead-filter-status" onchange="loadLeads()">
-            <option value="">All Statuses</option>
-            <option value="new">New</option>
-            <option value="scored">Scored</option>
-            <option value="email_ready">Email Ready</option>
-            <option value="contacted">Contacted</option>
-            <option value="followed_up">Followed Up</option>
-            <option value="responded">Responded</option>
-          </select>
-          <select id="lead-filter-niche" onchange="loadLeads()">
-            <option value="">All Niches</option>
-          </select>
-        </div>
-        <div class="action-buttons">
-          <button class="btn btn-secondary" onclick="discoverLeads()">🔍 Discover</button>
-          <button class="btn btn-secondary" onclick="scoreLeads()">📊 Score All</button>
-          <button class="btn btn-secondary" onclick="generateEmails()">✉️ Gen Emails</button>
-        </div>
-      </div>
+    <p class="data-note">Google Maps Places is used when configured; public sources can provide fallback coverage. Missing businesses or contact details are never invented.</p>
 
-      <div class="glass-card">
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Business</th>
-                <th>Niche</th>
-                <th>Location</th>
-                <th>Website</th>
-                <th>Score</th>
-                <th>Service</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="leads-table"></tbody>
-          </table>
-        </div>
-      </div>
+    <section class="system-grid" aria-label="System readiness">
+      <article><span>Google Maps API</span><strong id="maps-status">Checking…</strong><small id="maps-detail">Primary discovery source</small></article>
+      <article><span>Google Sheets</span><strong id="sheets-status">Checking…</strong><small id="sheet-detail">Connection not tested</small></article>
+      <article><span>Discovery Source</span><strong id="source-mode">Checking…</strong><small id="source-event">Idle</small></article>
+      <article><span>Agent Health</span><strong id="agent-health">Checking…</strong><small id="health-detail">Waiting for status</small></article>
     </section>
 
-    <!-- ─── Niches Page ─── -->
-    <section class="page" id="page-niches">
-      <div class="page-actions">
-        <button class="btn btn-secondary" onclick="analyzeNiches()">🧠 Analyze Niches</button>
-      </div>
-      <div class="niches-grid" id="niches-grid"></div>
+    <section class="progress-card">
+      <div><strong>Run progress</strong><span id="progress-label">0 qualified leads</span></div>
+      <div class="progress-track"><div id="progress-fill"></div></div>
     </section>
 
-    <!-- ─── Pipeline Page ─── -->
-    <section class="page" id="page-pipeline">
-
-      <!-- Autonomous Agent Status Card -->
-      <div class="glass-card pipeline-card" style="border: 1px solid rgba(99,102,241,0.3);">
-        <h3>🤖 Autonomous Agent Status</h3>
-        <p class="pipeline-desc">The agent runs automatically during business hours (9AM–6PM). No manual trigger required.</p>
-
-        <div class="stats-grid" style="margin-top:16px; grid-template-columns: repeat(4, 1fr);">
-          <div class="stat-card gradient-1" style="padding:14px">
-            <div class="stat-icon" style="font-size:1.2rem">📧</div>
-            <div class="stat-info">
-              <h3 id="pipe-emails-sent" style="font-size:1.4rem">0</h3>
-              <p style="font-size:0.72rem">Emails Sent Today</p>
-            </div>
-          </div>
-          <div class="stat-card gradient-2" style="padding:14px">
-            <div class="stat-icon" style="font-size:1.2rem">🎯</div>
-            <div class="stat-info">
-              <h3 id="pipe-leads-today" style="font-size:1.4rem">0</h3>
-              <p style="font-size:0.72rem">Leads Found Today</p>
-            </div>
-          </div>
-          <div class="stat-card gradient-3" style="padding:14px">
-            <div class="stat-icon" style="font-size:1.2rem">📈</div>
-            <div class="stat-info">
-              <h3 id="pipe-daily-cap" style="font-size:1.4rem">20</h3>
-              <p style="font-size:0.72rem">Daily Cap</p>
-            </div>
-          </div>
-          <div class="stat-card gradient-4" style="padding:14px">
-            <div class="stat-icon" style="font-size:1.2rem">⏰</div>
-            <div class="stat-info">
-              <h3 id="pipe-status" style="font-size:1rem">IDLE</h3>
-              <p style="font-size:0.72rem">Agent Status</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="pipeline-full" style="margin-top:16px;">
-          <button class="btn btn-secondary btn-lg" onclick="runPipeline()" title="Admin/debug: manually trigger pipeline">🔧 Manual Trigger (Debug)</button>
-          <button class="btn btn-secondary btn-lg" onclick="runFollowUps()">📩 Send Follow-Ups</button>
-        </div>
-      </div>
-
-      <!-- Warm-Up Schedule -->
-      <div class="glass-card">
-        <h3>📈 Email Warm-Up Schedule</h3>
-        <p class="pipeline-desc">Anti-ban warm-up prevents Gmail from flagging as spam.</p>
-        <div class="warmup-schedule">
-          <div class="warmup-day">
-            <div class="warmup-day-label">Day 1–3</div>
-            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:27%"></div></div>
-            <div class="warmup-day-cap">40/day</div>
-          </div>
-          <div class="warmup-day">
-            <div class="warmup-day-label">Day 4–7</div>
-            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:53%"></div></div>
-            <div class="warmup-day-cap">80/day</div>
-          </div>
-          <div class="warmup-day">
-            <div class="warmup-day-label">Day 8+</div>
-            <div class="warmup-bar-track"><div class="warmup-bar-fill" style="width:100%"></div></div>
-            <div class="warmup-day-cap">100–150/day</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pipeline Log -->
-      <div class="glass-card">
-        <div class="card-header">
-          <h3>📋 Live Activity Log</h3>
-          <span class="live-badge">● LIVE</span>
-        </div>
-        <div class="log-container" id="pipeline-log">
-          <div class="log-entry">Waiting for agent activity...</div>
-        </div>
-      </div>
+    <section class="metric-grid">
+      <article><span>Today's Date</span><strong id="today">—</strong></article>
+      <article><span>US Target</span><strong id="us-target">500</strong></article>
+      <article><span>UK Target</span><strong id="uk-target">500</strong></article>
+      <article><span>US Leads Found</span><strong id="us-found">0</strong></article>
+      <article><span>US Remaining</span><strong id="us-remaining">500</strong></article>
+      <article><span>UK Leads Found</span><strong id="uk-found">0</strong></article>
+      <article><span>UK Remaining</span><strong id="uk-remaining">500</strong></article>
+      <article><span>Candidates Found</span><strong id="candidates">0</strong></article>
+      <article><span>Total Leads Collected</span><strong id="collected">0</strong></article>
+      <article><span>Total Qualified</span><strong id="qualified">0</strong></article>
+      <article><span>Duplicates Removed</span><strong id="duplicates">0</strong></article>
+      <article><span>Manual Verification</span><strong id="manual">0</strong></article>
+      <article><span>Rejected</span><strong id="rejected">0</strong></article>
+      <article><span>Sheets Rows Synced</span><strong id="sheets-synced">0</strong></article>
+      <article><span>SQLite Rows Saved</span><strong id="sqlite-saved">0</strong></article>
+      <article><span>Master Rows Synced</span><strong id="master-synced">0</strong></article>
+      <article><span>Daily Rows Synced</span><strong id="daily-synced">0</strong></article>
+      <article><span>Pending Sheet Rows</span><strong id="sheet-pending">0</strong></article>
+      <article><span>Processed</span><strong id="processed">0</strong></article>
+      <article><span>Errors</span><strong id="error-count">0</strong></article>
+      <article><span>Source Queries</span><strong id="source-queries">0</strong></article>
+      <article><span>Last Query Candidates</span><strong id="last-query-count">0</strong></article>
+      <article><span>Last HTTP Status</span><strong id="http-status">—</strong></article>
+      <article><span>Speed / min</span><strong id="speed">0</strong></article>
+      <article><span>Run Status</span><strong id="run-status">Idle</strong></article>
+      <article><span>Excel Export</span><strong id="export-status">Not started</strong></article>
     </section>
 
-    <!-- ─── Settings Page ─── -->
-    <section class="page" id="page-settings">
-      <div class="glass-card">
-        <h3>⚙️ Configuration Status</h3>
-        <div class="settings-grid" id="settings-status"></div>
-      </div>
-      <div class="glass-card">
-        <h3>📧 Gmail Connection</h3>
-        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Connect your Gmail account to enable the autonomous email outreach agent.</p>
-        <button class="btn btn-glow" id="btn-connect-gmail" onclick="connectGmail()">
-          Connect Gmail
-        </button>
-      </div>
-      <div class="glass-card">
-        <h3>🔍 Quick Discovery</h3>
-        <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">Search for businesses in a specific niche and location.</p>
-        <div class="form-row">
-          <input type="text" id="discover-niche" placeholder="Niche (e.g. restaurants)" class="input">
-          <input type="text" id="discover-location" placeholder="Location (e.g. Dubai, UAE)" class="input">
-          <button class="btn btn-secondary" onclick="manualDiscover()">Search</button>
-        </div>
-      </div>
+    <section class="status-panel">
+      <div><span>Current Source</span><strong id="current-source">—</strong></div>
+      <div><span>Current Country</span><strong id="current-country">—</strong></div>
+      <div><span>Current City</span><strong id="current-city">—</strong></div>
+      <div><span>Current Category</span><strong id="current-category">—</strong></div>
+      <div><span>Website Being Audited</span><strong id="current-website">—</strong></div>
+      <div><span>Current Business</span><strong id="current-business">—</strong></div>
+      <div><span>Last Checkpoint</span><strong id="last-checkpoint">—</strong></div>
+      <div><span>Last Successful Fetch</span><strong id="last-fetch">—</strong></div>
+      <div><span>Last Error Code</span><strong id="last-error-code">None</strong></div>
+      <div><span>Estimated Finish</span><strong id="estimated-finish">—</strong></div>
+      <div><span>Shortfall Reason</span><strong id="shortfall">None</strong></div>
+      <div class="error-row"><span>Last Error</span><strong id="last-error">None</strong></div>
     </section>
-
-    <!-- Lead Detail Modal -->
-    <div class="modal-overlay" id="lead-modal">
-      <div class="modal glass-card">
-        <button class="modal-close" onclick="closeModal()">✕</button>
-        <div id="modal-content"></div>
-      </div>
-    </div>
-
-    <!-- Toast -->
-    <div class="toast-container" id="toast-container"></div>
+    <section class="activity-panel">
+      <div class="activity-heading"><div><span>Live activity</span><strong>Agent event timeline</strong></div><button id="clear-log" type="button">Clear</button></div>
+      <ol id="activity-log"><li class="muted">Waiting for agent activity…</li></ol>
+    </section>
+    <div id="toast" role="status" aria-live="polite"></div>
   </main>
-
-  <!-- Socket.io Client -->
   <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

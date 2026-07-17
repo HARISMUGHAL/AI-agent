@@ -1586,3 +1586,52 @@ select option { background: var(--bg-secondary); color: var(--text-primary); }
   .agent-status-bar { display: none; }
 }
 
+/* Data-only dashboard */
+.data-dashboard { margin:0; min-height:100vh; background:#f4f7fb; color:#172033; font-family:Inter,system-ui,sans-serif; }
+.data-shell { max-width:1180px; margin:auto; padding:36px 22px 70px; }
+.data-header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:24px; }
+.data-header h1 { margin:4px 0 8px; font-size:clamp(28px,4vw,44px); color:#102a43; }
+.data-header p { margin:0; color:#627d98; }
+.eyebrow { color:#0f766e!important; font-weight:800; text-transform:uppercase; letter-spacing:.12em; font-size:12px; }
+.status-pill { border-radius:999px; padding:10px 16px; font-weight:800; white-space:nowrap; }
+.status-pill.good { color:#075e54; background:#d5f5ed; border:1px solid #8de0d0; }
+.data-actions { display:flex; flex-wrap:wrap; gap:10px; padding:16px; background:white; border:1px solid #d9e2ec; border-radius:14px; box-shadow:0 5px 20px rgba(16,42,67,.06); }
+.data-actions button { border:1px solid #bcccdc; background:#fff; color:#243b53; padding:11px 15px; border-radius:8px; font-weight:750; cursor:pointer; }
+.data-actions button:hover { background:#edf2f7; }
+.data-actions button:disabled { opacity:.45; cursor:not-allowed; }
+.data-actions .primary { background:#0f766e; color:#fff; border-color:#0f766e; }
+.data-note { color:#627d98; font-size:14px; margin:12px 4px 22px; }
+.system-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:14px; }
+.system-grid article,.progress-card,.activity-panel { background:white; border:1px solid #d9e2ec; border-radius:12px; box-shadow:0 4px 14px rgba(16,42,67,.05); }
+.system-grid article { padding:18px; }
+.system-grid span,.system-grid small { display:block; color:#627d98; }
+.system-grid span { font-size:13px; margin-bottom:7px; }
+.system-grid strong { font-size:20px; color:#102a43; }
+.system-grid small { font-size:12px; margin-top:7px; line-height:1.4; }
+.progress-card { padding:16px 18px; margin-bottom:14px; }
+.progress-card>div:first-child { display:flex; justify-content:space-between; gap:15px; margin-bottom:10px; }
+.progress-card span { color:#627d98; font-size:13px; }
+.progress-track { height:10px; border-radius:999px; background:#e7eef5; overflow:hidden; }
+.progress-track div { height:100%; width:0; background:linear-gradient(90deg,#0f766e,#22c55e); transition:width .3s ease; }
+.metric-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(175px,1fr)); gap:14px; }
+.metric-grid article,.status-panel { background:white; border:1px solid #d9e2ec; border-radius:12px; box-shadow:0 4px 14px rgba(16,42,67,.05); }
+.metric-grid article { padding:18px; }
+.metric-grid span,.status-panel span { display:block; color:#627d98; font-size:13px; margin-bottom:7px; }
+.metric-grid strong { font-size:25px; color:#102a43; text-transform:capitalize; }
+.status-panel { margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; padding:20px; }
+.status-panel strong { color:#243b53; word-break:break-word; }
+.error-row strong { color:#b42318; }
+.ok-text { color:#087f5b!important; }.warn-text { color:#b54708!important; }.bad-text { color:#b42318!important; }
+.activity-panel { margin-top:16px; padding:20px; }
+.activity-heading { display:flex; align-items:center; justify-content:space-between; gap:15px; }
+.activity-heading span { display:block; color:#627d98; font-size:13px; margin-bottom:5px; }
+.activity-heading button { border:1px solid #bcccdc; background:white; border-radius:7px; padding:7px 11px; cursor:pointer; }
+#activity-log { list-style:none; padding:0; margin:16px 0 0; max-height:280px; overflow:auto; border-top:1px solid #e7eef5; }
+#activity-log li { display:grid; grid-template-columns:90px 1fr; gap:12px; padding:10px 4px; border-bottom:1px solid #edf2f7; font-size:13px; }
+#activity-log time { color:#829ab1; font-variant-numeric:tabular-nums; }
+#activity-log .error span { color:#b42318; }
+#activity-log .success span { color:#087f5b; }
+#activity-log .muted { display:block; color:#829ab1; }
+#toast { position:fixed; right:22px; bottom:22px; max-width:430px; padding:14px 18px; border-radius:9px; background:#102a43; color:white; opacity:0; pointer-events:none; transform:translateY(10px); transition:.2s; }
+#toast.show { opacity:1; transform:none; } #toast.error { background:#b42318; }
+@media(max-width:650px){.data-header{display:block}.status-pill{display:inline-block;margin-top:16px}.data-actions button{width:100%}}

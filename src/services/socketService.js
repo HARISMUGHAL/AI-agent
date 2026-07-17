@@ -64,4 +64,16 @@ function emitEmailSent(lead, emailsSentToday, dailyCap) {
   }
 }
 
-module.exports = { initSocketService, emitStatus, emitLog, emitLeadFound, emitEmailSent };
+/**
+ * Emit collection progress for data mode
+ */
+function emitCollectionProgress(data) {
+  if (_io) {
+    _io.emit('collection:progress', {
+      ...data,
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
+module.exports = { initSocketService, emitStatus, emitLog, emitLeadFound, emitEmailSent, emitCollectionProgress };

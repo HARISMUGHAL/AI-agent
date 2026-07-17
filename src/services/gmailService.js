@@ -15,6 +15,7 @@
  */
 
 require('dotenv').config(); // ensure env vars are loaded even if imported standalone
+const { assertOutreachDisabled } = require('../security/dataOnlyGuard');
 
 const { google } = require('googleapis');
 const {
@@ -207,6 +208,7 @@ function isAuthenticated() {
 
 // ─── Low-Level Send ─────────────────────────────────────────────────────────
 async function sendEmailViaAccount(account, to, subject, body, options = {}) {
+  assertOutreachDisabled('Gmail sending');
   const gmail = google.gmail({ version: 'v1', auth: account.client });
 
   const emailLines = [
@@ -246,6 +248,7 @@ async function sendEmailViaAccount(account, to, subject, body, options = {}) {
 
 // Legacy single-account send (backward-compat)
 async function sendEmail(to, subject, body) {
+  assertOutreachDisabled('Gmail sending');
   const pool = getAccountPool();
   if (!pool.length) throw new Error('Gmail not configured');
   const refreshToken = process.env.GMAIL_REFRESH_TOKEN || getSetting('gmail_refresh_token');
@@ -346,6 +349,7 @@ async function waitIfCooldown() {
  *  - Health metric recording
  */
 async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 100, followUpNumber = 0) {
+  assertOutreachDisabled('Gmail sending');
   if (!lead.email) {
     console.log(`⚠️  No email address for ${lead.business_name}. Skipping.`);
     return false;
@@ -491,6 +495,7 @@ async function sendEmailSafe(lead, emailData, emailsSentToday = 0, dailyCap = 10
  * @returns {number}                  Total emails sent this call
  */
 async function sendBatch(leads, emailsSentToday, dailyCap, followUpNumber = 0, onSent = null) {
+  assertOutreachDisabled('Gmail batch sending');
   if (!leads || leads.length === 0) return 0;
 
   // 6. Randomize sending order (human behavior)
@@ -580,6 +585,7 @@ function getWarmupStatus() {
 
 // ─── Legacy sendEmailToLead (backward compat) ─────────────────────────────
 async function sendEmailToLead(lead, emailData, followUpNumber = 0) {
+  assertOutreachDisabled('Gmail sending');
   if (!lead.email) {
     console.log(`⚠️  No email for ${lead.business_name}. Skipping.`);
     return false;
@@ -598,6 +604,7 @@ async function sendEmailToLead(lead, emailData, followUpNumber = 0) {
 
 // ─── Inbox Reader Methods ────────────────────────────────────────────────────
 async function fetchUnreadReplies() {
+  assertOutreachDisabled('Inbox reading');
   const pool = getAccountPool();
   const allMessages = [];
 

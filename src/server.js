@@ -11,13 +11,12 @@ const cors = require('cors');
 const path = require('path');
 const { Server } = require('socket.io');
 
-// Services
-const { initDatabase } = require('./database/db');
+const { initDatabase, isDataCollectionOnly } = require('./database/db');
 const apiRoutes = require('./routes/api');
 const { handleAuthCallback } = require('./services/gmailService');
 const { startScheduler } = require('./services/scheduler');
 const { initSocketService } = require('./services/socketService');
-const { initSheetHeaders } = require('./services/googleSheets');
+const { initSheetHeaders, initDataModeHeaders, logConfigStatus, validateGoogleSheetsConfig } = require('./services/googleSheets');
 
 const app = express();
 const server = http.createServer(app);
@@ -27,21 +26,23 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
+const dataMode = isDataCollectionOnly();
 
-// ───────────────────────── Middleware ─────────────────────────
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// ───────────────────────── API Routes ─────────────────────────
 app.use('/api', apiRoutes);
 
-// ───────────────────────── Gmail OAuth ─────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', data_collection_only: dataMode, timestamp: new Date().toISOString() }));
+
 app.get('/auth/callback', async (req, res) => {
+  if (dataMode) {
+    return res.redirect('/?mode=data_collection');
+  }
   try {
     const { code } = req.query;
     if (!code) return res.status(400).send('Missing authorization code');
-
     await handleAuthCallback(code);
     res.redirect('/?gmail=connected');
   } catch (err) {
@@ -50,71 +51,67 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// ───────────────────────── Dashboard ─────────────────────────
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-// ───────────────────────── Fallback ─────────────────────────
 app.get('*', (req, res) => {
-  res.sendFile(
-    path.join(__dirname, '..', 'public', 'index.html'),
-    (err) => {
-      if (err) res.status(200).send('Zynqora Edge is LIVE 🚀');
-    }
-  );
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'), (err) => {
+    if (err) res.status(200).send('Zynqora Edge is LIVE 🚀');
+  });
 });
 
-// ───────────────────────── Socket.io ─────────────────────────
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
-
   try {
     const { getAgentStatus } = require('./services/scheduler');
     socket.emit('agent:status', getAgentStatus());
   } catch (e) {
     console.log('Status emit error:', e.message);
   }
-
   socket.on('disconnect', () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
   });
 });
 
-// ───────────────────────── STARTUP (IMPORTANT FIX) ─────────────────────────
 async function start() {
   try {
     console.log('🚀 Starting Zynqora Edge...');
 
-    // ❗ NON-BLOCKING INIT (CRITICAL FOR RENDER)
-    initDatabase().catch(err =>
-      console.error('DB init failed:', err.message)
-    );
+    if (dataMode) {
+      console.log('📊 MODE: Data Collection Only (no email sending)');
+      console.log(`   Target: ${process.env.QUALIFIED_LEAD_TARGET_PER_DAY || 500} qualified leads/day`);
+      console.log(`   Countries: ${process.env.TARGET_COUNTRIES || 'United States,United Kingdom'}`);
+    } else {
+      console.log('📧 MODE: Autonomous Email Outreach');
+    }
+
+    await initDatabase().catch(err => console.error('DB init failed:', err.message));
 
     initSocketService(io);
 
-    initSheetHeaders().catch(err =>
-      console.log('Sheets not configured:', err.message)
-    );
+    const sheetsCfg = logConfigStatus();
+    if (dataMode) {
+      if (sheetsCfg.status === 'ok') {
+        initDataModeHeaders().catch(err => console.log('[Sheets] Init deferred:', err.message));
+      } else {
+        console.log('[Sheets] Waiting for configuration before collection can start.');
+      }
+    } else {
+      initSheetHeaders().catch(err => console.log('Sheets not configured:', err.message));
+    }
 
-    // ✅ IMPORTANT: LISTEN FIRST (Render fix)
     server.listen(PORT, () => {
+      const modeLabel = dataMode ? 'Data Collection Only' : 'Fully Autonomous';
       console.log(`
 ╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║   ⚡ ZYNQORA EDGE — AUTONOMOUS AI AGENT             ║
-║                                                       ║
+║   ⚡ ZYNQORA EDGE — AI AGENT                        ║
 ║   Dashboard: http://localhost:${PORT}                ║
-║   API:       /api                                     ║
-║   Mode:      Fully Autonomous                        ║
-║                                                       ║
+║   Mode:      ${modeLabel.padEnd(36)}║
 ╚═══════════════════════════════════════════════════════╝
       `);
-
-      // Start background tasks AFTER server is live
       startScheduler();
     });
-
   } catch (err) {
     console.error('Fatal startup error:', err);
     process.exit(1);

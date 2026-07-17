@@ -4,6 +4,7 @@
  */
 
 const { getTodayHealthMetrics } = require('../database/db');
+const { assertOutreachDisabled } = require('../security/dataOnlyGuard');
 
 // Maintain stable rotation state across batches
 let _accountIndex = -1;
@@ -53,6 +54,7 @@ function getHealthyAccounts(allAccounts) {
  * Stable rotation system (invoked every 3-7 emails by sendBatch).
  */
 function rotateAccount(allAccounts) {
+  assertOutreachDisabled('Sender account rotation');
   const healthy = getHealthyAccounts(allAccounts);
   if (healthy.length === 0) return null;
   

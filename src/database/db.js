@@ -1,8 +1,9 @@
 const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
+const { isDataCollectionOnly: hardDataMode, assertOutreachDisabled } = require('../security/dataOnlyGuard');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = process.env.DATA_DIRECTORY ? path.resolve(process.env.DATA_DIRECTORY) : path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, 'leads.db');
@@ -45,7 +46,7 @@ async function saveDb(retries = 3, delay = 100) {
 }
 
 // Auto-save every 60 seconds (less frequent to reduce disk pressure)
-setInterval(saveDb, 60000);
+setInterval(saveDb, 60000).unref();
 
 /** Initialize the database */
 async function initDatabase() {
@@ -140,6 +141,119 @@ async function initDatabase() {
     db.run('UPDATE leads SET deal_value = 0 WHERE deal_value IS NULL');
   } catch(e) {}
 
+  // Data collection mode columns
+  const dataModeColumns = [
+    'owner_or_contact_name TEXT', 'alternate_email TEXT', 'contact_page_url TEXT',
+    'contact_method TEXT', 'city TEXT', 'state_or_region TEXT', 'country TEXT',
+    'google_maps_url TEXT', 'website_status TEXT', 'website_issues TEXT',
+    'website_evidence TEXT', 'needs_website INTEGER DEFAULT 0',
+    'needs_website_redesign INTEGER DEFAULT 0', 'ai_opportunity_score INTEGER DEFAULT 0',
+    'needs_ai_services INTEGER DEFAULT 0', 'recommended_service TEXT',
+    'qualification_reason TEXT', 'lead_score INTEGER DEFAULT 0', 'data_source TEXT',
+    'verification_status TEXT', 'outreach_status TEXT DEFAULT "not_contacted"',
+    'last_review_date TEXT', 'operating_status TEXT', 'run_id TEXT'
+  ];
+  for (const col of dataModeColumns) {
+    try { db.run(`ALTER TABLE leads ADD COLUMN ${col}`); } catch (e) {}
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS collection_runs (
+      run_id TEXT PRIMARY KEY,
+      status TEXT DEFAULT 'pending',
+      target INTEGER DEFAULT 500,
+      qualified_count INTEGER DEFAULT 0,
+      synced_count INTEGER DEFAULT 0,
+      us_count INTEGER DEFAULT 0,
+      uk_count INTEGER DEFAULT 0,
+      start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+      end_time DATETIME,
+      checkpoint_data TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS search_combinations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      country TEXT NOT NULL,
+      city TEXT NOT NULL,
+      niche TEXT NOT NULL,
+      page_token TEXT DEFAULT '',
+      completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(run_id, country, city, niche, page_token)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS data_leads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      dataset TEXT NOT NULL,
+      fingerprint TEXT NOT NULL UNIQUE,
+      record_json TEXT NOT NULL,
+      verification_status TEXT,
+      collected_date TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS data_run_state (
+      run_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS discovery_checkpoints (
+      dataset TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      source TEXT,
+      city TEXT,
+      category TEXT,
+      country TEXT,
+      page_cursor TEXT,
+      candidates_fetched INTEGER DEFAULT 0,
+      candidates_processed INTEGER DEFAULT 0,
+      candidates_rejected INTEGER DEFAULT 0,
+      duplicates_removed INTEGER DEFAULT 0,
+      qualified_saved INTEGER DEFAULT 0,
+      last_error TEXT,
+      shortfall_reason TEXT,
+      checkpoint_json TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS discovery_combinations (
+      dataset TEXT NOT NULL,
+      source TEXT NOT NULL,
+      city TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'completed',
+      candidates_found INTEGER DEFAULT 0,
+      completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(dataset, source, city, category)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sheet_sync_state (
+      dataset TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      master_status TEXT DEFAULT 'pending',
+      daily_status TEXT DEFAULT 'pending',
+      master_error TEXT,
+      daily_error TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(dataset, fingerprint)
+    )
+  `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS processed_messages (
       message_id TEXT PRIMARY KEY,
@@ -177,17 +291,259 @@ function runSql(sql, params = []) {
   saveDb().catch(err => console.error('BG Save Error:', err.message));
 }
 
+// ─── Data Collection Mode ───────────────────────────────
+function isDataCollectionOnly() {
+  return hardDataMode();
+}
+
+function insertQualifiedLead(lead) {
+  try {
+    runSql(`INSERT OR IGNORE INTO leads (
+      place_id, business_name, niche, location, address, website, phone, email,
+      rating, review_count, score, status, owner_or_contact_name, alternate_email,
+      contact_page_url, contact_method, city, state_or_region, country, google_maps_url,
+      website_status, website_issues, website_evidence, needs_website, needs_website_redesign,
+      ai_opportunity_score, needs_ai_services, recommended_service, qualification_reason,
+      lead_score, data_source, verification_status, outreach_status, last_review_date,
+      operating_status, run_id, service_type, recommendation, reasoning
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        lead.place_id, lead.business_name, lead.niche, lead.location, lead.address,
+        lead.website || '', lead.phone || '', lead.email || '', lead.rating || 0,
+        lead.review_count || 0, lead.lead_score || lead.score || 0,
+        lead.status || 'qualified', lead.owner_or_contact_name || '',
+        lead.alternate_email || '', lead.contact_page_url || '', lead.contact_method || '',
+        lead.city || '', lead.state_or_region || '', lead.country || '',
+        lead.google_maps_url || '', lead.website_status || '',
+        typeof lead.website_issues === 'string' ? lead.website_issues : JSON.stringify(lead.website_issues || []),
+        typeof lead.website_evidence === 'string' ? lead.website_evidence : JSON.stringify(lead.website_evidence || []),
+        lead.needs_website ? 1 : 0, lead.needs_website_redesign ? 1 : 0,
+        lead.ai_opportunity_score || 0, lead.needs_ai_services ? 1 : 0,
+        lead.recommended_service || '', lead.qualification_reason || '',
+        lead.lead_score || 0, lead.data_source || 'google_maps',
+        lead.verification_status || 'pending', lead.outreach_status || 'not_contacted',
+        lead.last_review_date || '', lead.operating_status || 'operational',
+        lead.run_id || '', lead.recommended_service || '', lead.qualification_reason || '',
+        lead.qualification_reason || ''
+      ]);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function checkDuplicateByEmail(email) {
+  if (!email) return null;
+  return queryOne('SELECT id, place_id FROM leads WHERE email = ? COLLATE NOCASE AND email != ""', [email]);
+}
+
+function checkDuplicateByPhone(phone, name) {
+  if (!phone) return null;
+  const normalized = phone.replace(/\D/g, '');
+  if (!normalized) return null;
+  if (name) {
+    return queryOne(
+      'SELECT id FROM leads WHERE REPLACE(REPLACE(REPLACE(phone, "-", ""), " ", ""), "+", "") LIKE ? AND business_name = ? COLLATE NOCASE',
+      [`%${normalized.slice(-10)}%`, name]
+    );
+  }
+  return queryOne(
+    'SELECT id FROM leads WHERE REPLACE(REPLACE(REPLACE(phone, "-", ""), " ", ""), "+", "") LIKE ?',
+    [`%${normalized.slice(-10)}%`]
+  );
+}
+
+function checkDuplicateByDomain(domain) {
+  if (!domain) return null;
+  const d = domain.toLowerCase().replace(/^www\./, '');
+  return queryOne('SELECT id FROM leads WHERE website LIKE ?', [`%${d}%`]);
+}
+
+function createCollectionRun(target = 500) {
+  const runId = `run_${Date.now()}`;
+  runSql(`INSERT INTO collection_runs (run_id, status, target) VALUES (?, 'running', ?)`, [runId, target]);
+  return runId;
+}
+
+function updateRunProgress(runId, data) {
+  const fields = [];
+  const params = [];
+  if (data.qualified_count !== undefined) { fields.push('qualified_count = ?'); params.push(data.qualified_count); }
+  if (data.synced_count !== undefined) { fields.push('synced_count = ?'); params.push(data.synced_count); }
+  if (data.us_count !== undefined) { fields.push('us_count = ?'); params.push(data.us_count); }
+  if (data.uk_count !== undefined) { fields.push('uk_count = ?'); params.push(data.uk_count); }
+  if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status); }
+  if (data.checkpoint_data !== undefined) { fields.push('checkpoint_data = ?'); params.push(typeof data.checkpoint_data === 'string' ? data.checkpoint_data : JSON.stringify(data.checkpoint_data)); }
+  if (fields.length === 0) return;
+  params.push(runId);
+  runSql(`UPDATE collection_runs SET ${fields.join(', ')} WHERE run_id = ?`, params);
+}
+
+function getActiveRun() {
+  return queryOne("SELECT * FROM collection_runs WHERE status IN ('running', 'paused') ORDER BY start_time DESC LIMIT 1");
+}
+
+function completeRun(runId) {
+  runSql(`UPDATE collection_runs SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE run_id = ?`, [runId]);
+}
+
+function pauseRun(runId) {
+  runSql(`UPDATE collection_runs SET status = 'paused' WHERE run_id = ?`, [runId]);
+}
+
+function recordSearchCombination(runId, country, city, niche, pageToken = '') {
+  try {
+    runSql('INSERT OR IGNORE INTO search_combinations (run_id, country, city, niche, page_token) VALUES (?, ?, ?, ?, ?)',
+      [runId, country, city, niche, pageToken || '']);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isSearchCombinationDone(runId, country, city, niche, pageToken = '') {
+  const row = queryOne(
+    'SELECT id FROM search_combinations WHERE run_id = ? AND country = ? AND city = ? AND niche = ? AND page_token = ?',
+    [runId, country, city, niche, pageToken || '']
+  );
+  return !!row;
+}
+
+function getCollectionStats() {
+  const active = getActiveRun();
+  const totals = queryOne(`
+    SELECT COUNT(*) as total_qualified,
+      SUM(CASE WHEN country = 'United States' THEN 1 ELSE 0 END) as us_total,
+      SUM(CASE WHEN country = 'United Kingdom' THEN 1 ELSE 0 END) as uk_total
+    FROM leads WHERE status = 'qualified'
+  `) || { total_qualified: 0, us_total: 0, uk_total: 0 };
+  return { activeRun: active, totals };
+}
+
+function getQualifiedLeadCount(runId) {
+  const result = queryOne('SELECT COUNT(*) as count FROM leads WHERE run_id = ? AND status = ?', [runId, 'qualified']);
+  return result ? result.count : 0;
+}
+
+function getQualifiedLeadsByRun(runId, limit = 100) {
+  return queryAll('SELECT * FROM leads WHERE run_id = ? AND status = ? ORDER BY lead_score DESC LIMIT ?', [runId, 'qualified', limit]);
+}
+
+function getUnsyncedQualifiedLeads(runId, limit = 50) {
+  return queryAll("SELECT * FROM leads WHERE run_id = ? AND status = 'qualified' AND verification_status != 'synced' ORDER BY lead_score DESC LIMIT ?", [runId, limit]);
+}
+
+function markLeadsSynced(ids) {
+  if (!ids || ids.length === 0) return;
+  for (const id of ids) {
+    runSql("UPDATE leads SET verification_status = 'synced', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+  }
+}
+
+function getDataLeadFingerprints(dataset) {
+  return new Set(queryAll('SELECT fingerprint FROM data_leads WHERE dataset = ?', [dataset]).map(row => row.fingerprint));
+}
+
+function saveDataLead(dataset, fingerprint, record) {
+  if (!dataset || !fingerprint || !record) return false;
+  runSql(`INSERT OR IGNORE INTO data_leads (dataset, fingerprint, record_json, verification_status, collected_date)
+    VALUES (?, ?, ?, ?, ?)`, [dataset, fingerprint, JSON.stringify(record), record.verification_status || '', new Date().toISOString().slice(0, 10)]);
+  return true;
+}
+
+function getDataLeads(dataset) {
+  const seen = new Set();
+  return queryAll('SELECT record_json FROM data_leads WHERE dataset = ? ORDER BY created_at DESC', [dataset]).map(row => {
+    try { return JSON.parse(row.record_json); } catch { return null; }
+  }).filter(record => {
+    if (!record) return false;
+    const key = JSON.stringify(record);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function saveDataRunState(runId, status, state) {
+  runSql(`INSERT OR REPLACE INTO data_run_state (run_id, status, state_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+    [runId, status, JSON.stringify(state || {})]);
+}
+
+function getLatestDataRunState() {
+  const row = queryOne('SELECT * FROM data_run_state ORDER BY updated_at DESC LIMIT 1');
+  if (!row) return null;
+  try { return { ...row, state: JSON.parse(row.state_json) }; } catch { return row; }
+}
+
+function saveDiscoveryCheckpoint(dataset, state = {}) {
+  runSql(`INSERT OR REPLACE INTO discovery_checkpoints (
+    dataset,status,source,city,category,country,page_cursor,candidates_fetched,candidates_processed,candidates_rejected,
+    duplicates_removed,qualified_saved,last_error,shortfall_reason,checkpoint_json,updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+    dataset, state.status || 'running', state.source || '', state.city || '', state.category || '', state.country || '', state.page_cursor || '',
+    state.candidates_fetched || 0, state.candidates_processed || 0, state.candidates_rejected || 0, state.duplicates_removed || 0,
+    state.qualified_saved || 0, state.last_error || '', state.shortfall_reason || '', JSON.stringify(state)
+  ]);
+}
+
+function getDiscoveryCheckpoint(dataset) {
+  const row = queryOne('SELECT * FROM discovery_checkpoints WHERE dataset = ?', [dataset]);
+  if (!row) return null;
+  try { return { ...row, ...JSON.parse(row.checkpoint_json || '{}') }; } catch { return row; }
+}
+
+function markDiscoveryCombinationCompleted(dataset, source, city, category, candidatesFound = 0) {
+  runSql(`INSERT OR REPLACE INTO discovery_combinations
+    (dataset, source, city, category, status, candidates_found, completed_at)
+    VALUES (?, ?, ?, ?, 'completed', ?, CURRENT_TIMESTAMP)`,
+  [dataset, source, city, category, Number(candidatesFound) || 0]);
+}
+
+function isDiscoveryCombinationCompleted(dataset, source, city, category) {
+  return !!queryOne(`SELECT 1 FROM discovery_combinations
+    WHERE dataset = ? AND source = ? AND city = ? AND category = ? AND status = 'completed'`,
+  [dataset, source, city, category]);
+}
+
+function getDataPersistenceStats(dataset) {
+  const rows = queryOne('SELECT COUNT(*) AS count FROM data_leads WHERE dataset = ?', [dataset]) || { count: 0 };
+  const sync = queryOne(`SELECT
+    SUM(CASE WHEN master_status = 'synced' THEN 1 ELSE 0 END) AS master_synced,
+    SUM(CASE WHEN daily_status = 'synced' THEN 1 ELSE 0 END) AS daily_synced,
+    SUM(CASE WHEN master_status != 'synced' OR daily_status != 'synced' THEN 1 ELSE 0 END) AS pending
+    FROM sheet_sync_state WHERE dataset = ?`, [dataset]) || {};
+  return { sqlite_rows: Number(rows.count || 0), master_synced: Number(sync.master_synced || 0), daily_synced: Number(sync.daily_synced || 0), pending: Number(sync.pending || 0) };
+}
+
+function markSheetSyncPending(dataset, fingerprint) {
+  runSql(`INSERT OR IGNORE INTO sheet_sync_state (dataset, fingerprint) VALUES (?, ?)`, [dataset, fingerprint]);
+}
+
+function updateSheetSyncStatus(dataset, fingerprint, sheet, status, error = '') {
+  const statusColumn = sheet === 'master' ? 'master_status' : 'daily_status';
+  const errorColumn = sheet === 'master' ? 'master_error' : 'daily_error';
+  runSql(`UPDATE sheet_sync_state SET ${statusColumn} = ?, ${errorColumn} = ?, updated_at = CURRENT_TIMESTAMP WHERE dataset = ? AND fingerprint = ?`,
+    [status, error, dataset, fingerprint]);
+}
+
+function getPendingSheetSync(dataset) {
+  return queryAll(`SELECT * FROM sheet_sync_state WHERE dataset = ? AND (master_status != 'synced' OR daily_status != 'synced')`, [dataset]);
+}
+
 // ─── Lead Operations ────────────────────────────────────
 function insertLead(lead) {
   try {
-    const { syncLeadToSheets } = require('../services/googleSheets');
-    runSql(`INSERT OR IGNORE INTO leads (place_id, business_name, niche, location, address, website, phone, email, rating, review_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [lead.place_id, lead.business_name, lead.niche, lead.location, lead.address, lead.website, lead.phone, lead.email, lead.rating, lead.review_count]);
-    
-    // Trigger Sheets sync after successful DB insert
-    syncLeadToSheets(lead).catch(err => console.error('Sheet sync non-blocking error:', err.message));
-    
+    if (!isDataCollectionOnly()) {
+      const { syncLeadToSheets } = require('../services/googleSheets');
+      runSql(`INSERT OR IGNORE INTO leads (place_id, business_name, niche, location, address, website, phone, email, rating, review_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [lead.place_id, lead.business_name, lead.niche, lead.location, lead.address, lead.website, lead.phone, lead.email, lead.rating, lead.review_count]);
+      syncLeadToSheets(lead).catch(err => console.error('Sheet sync non-blocking error:', err.message));
+    } else {
+      runSql(`INSERT OR IGNORE INTO leads (place_id, business_name, niche, location, address, website, phone, email, rating, review_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [lead.place_id, lead.business_name, lead.niche, lead.location, lead.address, lead.website, lead.phone, lead.email, lead.rating, lead.review_count]);
+    }
     return true;
   } catch (e) {
     return false;
@@ -334,6 +690,7 @@ function updateOutreachResponseStatus(leadId, status) {
 let _warmupDayIncrementedForDate = '';
 
 function getWarmupDay() {
+  assertOutreachDisabled('Warmup counters');
   const today = new Date().toDateString();
 
   const stored = getSetting('warmup_day');
@@ -440,6 +797,7 @@ function getBounceRateMetrics() {
 
 // ─── Outreach Operations ────────────────────────────────
 function insertOutreach(lead_id, email_subject, email_body, follow_up_number) {
+  assertOutreachDisabled('Outreach logging');
   runSql(`INSERT INTO outreach_log (lead_id, email_subject, email_body, follow_up_number) VALUES (?, ?, ?, ?)`,
     [lead_id, email_subject, email_body, follow_up_number || 0]);
 }
@@ -575,5 +933,35 @@ module.exports = {
   recordSendError,
   saveDb,
   queryAll,
-  queryOne
+  queryOne,
+  isDataCollectionOnly,
+  insertQualifiedLead,
+  checkDuplicateByEmail,
+  checkDuplicateByPhone,
+  checkDuplicateByDomain,
+  createCollectionRun,
+  updateRunProgress,
+  getActiveRun,
+  completeRun,
+  pauseRun,
+  recordSearchCombination,
+  isSearchCombinationDone,
+  getCollectionStats,
+  getQualifiedLeadCount,
+  getQualifiedLeadsByRun,
+  getUnsyncedQualifiedLeads,
+  markLeadsSynced
+  ,getDataLeadFingerprints
+  ,saveDataLead
+  ,getDataLeads
+  ,saveDataRunState
+  ,getLatestDataRunState
+  ,saveDiscoveryCheckpoint
+  ,getDiscoveryCheckpoint
+  ,markDiscoveryCombinationCompleted
+  ,isDiscoveryCombinationCompleted
+  ,getDataPersistenceStats
+  ,markSheetSyncPending
+  ,updateSheetSyncStatus
+  ,getPendingSheetSync
 };

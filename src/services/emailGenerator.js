@@ -197,6 +197,7 @@ OUTPUT FORMAT (strict JSON, no markdown):
  * @param {boolean} isFollowUp   true = generate follow-up email instead
  */
 async function generateEmailForLead(lead, isFollowUp = false) {
+  assertOutreachDisabled('Outreach email generation');
   const sender = getSenderContext();
   const ai     = getAIModel();
 
@@ -386,6 +387,7 @@ function generateFallbackEmail(lead, sender, isFollowUp = false) {
  * Returns count of successfully generated drafts.
  */
 async function generateAllEmails() {
+  assertOutreachDisabled('Outreach email generation');
   const leads = getLeadsByStatus('scored');
 
   if (leads.length === 0) {
@@ -420,3 +422,4 @@ async function generateAllEmails() {
 }
 
 module.exports = { generateEmailForLead, generateAllEmails };
+const { assertOutreachDisabled } = require('../security/dataOnlyGuard');

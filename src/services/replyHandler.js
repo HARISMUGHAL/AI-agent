@@ -101,6 +101,7 @@ OUTPUT FORMAT (Respond ONLY in JSON, no markdown):
  * Integrated into the scheduler.
  */
 async function processInbox() {
+  assertOutreachDisabled('Inbox reading and reply classification');
   console.log('\n📩 Checking active accounts for unread replies...');
   
   let unreadMessages = [];
@@ -190,3 +191,4 @@ async function processInbox() {
 module.exports = {
   processInbox
 };
+const { assertOutreachDisabled } = require('../security/dataOnlyGuard');
